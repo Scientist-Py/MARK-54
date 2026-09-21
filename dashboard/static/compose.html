@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gmail — Compose Draft</title>
+  <!-- React & Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Roboto:wght@300;400;500;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+  <style>
+    body {
+      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background-color: #f6f8fc;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .google-sans {
+      font-family: 'Google Sans', sans-serif;
+    }
+    .serif-font {
+      font-family: 'Merriweather', Georgia, serif;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      user-select: none;
+    }
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #dadce0;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #bdc1c6;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function App() {
+      const [tab, setTab] = useState("email"); // 'email' | 'studio'
+      const [to, setTo] = useState("");
+      const [cc, setCc] = useState("");
+      const [bcc, setBcc] = useState("");
+      const [showCc, setShowCc] = useState(false);
+      const [showBcc, setShowBcc] = useState(false);
+      const [subject, setSubject] = useState("");
+      const [body, setBody] = useState("");
+      const [status, setStatus] = useState("idle"); // 'idle' | 'sending' | 'sent' | 'error'
+      const [toast, setToast] = useState(null);
+      const [isMaximized, setIsMaximized] = useState(false);
+
+      // Studio Mode state (poems, letters, notes)
+      const [studioTitle, setStudioTitle] = useState("");
+      const [studioContent, setStudioContent] = useState("");
+      const [studioCategory, setStudioCategory] = useState("poem");
+      const [studioSerif, setStudioSerif] = useState(true);
+
+      // Load draft from URL or API
+      useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const urlTo = params.get("to");
+        const urlSubject = params.get("subject");
+        const urlBody = params.get("body");
+        const urlType = params.get("type"); // 'email' | 'studio'
+        const urlTitle = params.get("title");
+        const urlContent = params.get("content");
+
+        if (urlType === "studio" || urlTitle || urlContent) {
+          setTab("studio");
+          if (urlTitle) setStudioTitle(urlTitle);
+          if (urlContent) setStudioContent(urlContent);
+          if (params.get("category")) setStudioCategory(params.get("category"));
+        } else if (urlTo || urlSubject || urlBody) {
+          if (urlTo) setTo(urlTo);
+          if (urlSubject) setSubject(urlSubject);
+          if (urlBody) setBody(urlBody);
+        } else {
+          // Fetch latest draft from server
+          fetch("/api/drafts/latest")
+            .then(res => res.json())
+            .then(data => {
+              if (data && data.ok && data.draft) {
+                const d = data.draft;
+                if (d.type === "studio") {
+                  setTab("studio");
+                  setStudioTitle(d.title || "");
+                  setStudioContent(d.content || "");
+                  setStudioCategory(d.category || "poem");
+                } else {
+                  setTo(d.to || "");
+                  setSubject(d.subject || "");
+                  setBody(d.body || "");
+                  if (d.cc) { setCc(d.cc); setShowCc(true); }
+                  if (d.bcc) { setBcc(d.bcc); setShowBcc(true); }
+                }
+              }
+            })
+            .catch(() => {});
+        }
+      }, []);
+
+      const showNotification = (msg, type = "success") => {
+        setToast({ msg, type });
+        setTimeout(() => setToast(null), 5000);
+      };
+
+      const handleSendEmail = async () => {
+        if (!to.trim()) {
+          showNotification("Please specify a recipient email address.", "error");
+          return;
+        }
+        setStatus("sending");
+        try {
+          const res = await fetch("/api/send-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: to.trim(),
+              cc: cc.trim(),
+              bcc: bcc.trim(),
+              subject: subject.trim(),
+              body: body
+            })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            setStatus("sent");
+            showNotification("Message sent to " + to, "success");
+            setTimeout(() => {
+              setTo("");
+              setSubject("");
+              setBody("");
+              setStatus("idle");
+            }, 1200);
+          } else {
+            setStatus("error");
+            showNotification(data.error || "Failed to send email.", "error");
+          }
+        } catch (err) {
+          setStatus("error");
+          showNotification("Network error sending email: " + err.message, "error");
+        }
+      };
+
+      const handleSaveStudioToDesktop = async () => {
+        if (!studioContent.trim()) {
+          showNotification("No content to save.", "error");
+          return;
+        }
+        try {
+          const res = await fetch("/api/save-text", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: studioTitle.trim() || "Untitled Piece",
+              content: studioContent,
+              category: studioCategory
+            })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showNotification("Saved to Desktop as " + data.filename, "success");
+          } else {
+            showNotification("Failed to save: " + (data.error || ""), "error");
+          }
+        } catch (e) {
+          showNotification("Error saving: " + e.message, "error");
+        }
+      };
+
+      const handleCopyText = (text) => {
+        navigator.clipboard.writeText(text);
+        showNotification("Copied to clipboard!", "success");
+      };
+
+      return (
+        <div className="flex h-screen w-screen bg-[#f6f8fc] text-[#1f1f1f]">
+          
+          {/* Top Navbar */}
+          <div className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-[#e5e7eb] flex items-center justify-between px-6 z-10">
+            <div className="flex items-center gap-3">
+              <svg className="w-8 h-8" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6zm-2 0l-8 5-8-5h16zm0 12H4V8l8 5 8-5v10z"/>
+              </svg>
+              <span className="google-sans text-xl font-medium tracking-tight text-[#444746]">
+                JARVIS <span className="text-[#0b57d0] font-semibold">Workspace</span>
+              </span>
+            </div>
+
+            {/* Mode Tabs */}
+            <div className="flex bg-[#e9eef6] p-1 rounded-full text-xs font-medium">
+              <button
+                onClick={() => setTab("email")}
+                className={`px-5 py-1.5 rounded-full transition-all flex items-center gap-1.5 ${
+                  tab === "email" ? "bg-white text-[#0b57d0] shadow-sm font-semibold" : "text-[#444746] hover:text-black"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">mail</span>
+                Gmail Composer
+              </button>
+              <button
+                onClick={() => setTab("studio")}
+                className={`px-5 py-1.5 rounded-full transition-all flex items-center gap-1.5 ${
+                  tab === "studio" ? "bg-white text-[#0b57d0] shadow-sm font-semibold" : "text-[#444746] hover:text-black"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">auto_stories</span>
+                Text & Poem Studio
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full font-medium flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Connected to JARVIS
+              </span>
+            </div>
+          </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 pt-20 pb-6 px-4 md:px-12 flex justify-center items-center overflow-auto">
+
+            {/* ── GMAIL COMPOSER VIEW ── */}
+            {tab === "email" && (
+              <div className={`w-full transition-all duration-200 bg-white rounded-2xl shadow-2xl border border-[#c7c7c7] flex flex-col overflow-hidden ${
+                isMaximized ? "max-w-6xl h-[88vh]" : "max-w-3xl h-[78vh]"
+              }`}>
+                {/* Gmail Composer Header */}
+                <div className="bg-[#f2f6fc] px-4 py-3 flex items-center justify-between border-b border-[#e0e2ec] select-none">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#0b57d0] text-xl">edit_note</span>
+                    <span className="google-sans text-sm font-medium text-[#1f1f1f]">New Message</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[#444746]">
+                    <button
+                      onClick={() => setIsMaximized(!isMaximized)}
+                      title={isMaximized ? "Restore window" : "Full screen"}
+                      className="p-1 hover:bg-[#e0e2ec] rounded-full flex items-center"
+                    >
+                      <span className="material-symbols-outlined text-base">
+                        {isMaximized ? "close_fullscreen" : "open_in_full"}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => { setTo(""); setSubject(""); setBody(""); }}
+                      title="Clear draft"
+                      className="p-1 hover:bg-[#e0e2ec] rounded-full flex items-center"
+                    >
+                      <span className="material-symbols-outlined text-base">close</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* To Field */}
+                <div className="px-4 py-2 border-b border-[#f0f0f0] flex items-center gap-2">
+                  <span className="text-xs text-[#5e5e5e] font-medium w-12">To</span>
+                  <input
+                    type="email"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    placeholder="Recipient email address"
+                    className="flex-1 text-sm outline-none text-[#1f1f1f] py-1 bg-transparent"
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2 text-xs text-[#5e5e5e]">
+                    {!showCc && (
+                      <button onClick={() => setShowCc(true)} className="hover:text-black font-medium">Cc</button>
+                    )}
+                    {!showBcc && (
+                      <button onClick={() => setShowBcc(true)} className="hover:text-black font-medium">Bcc</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* CC Field */}
+                {showCc && (
+                  <div className="px-4 py-2 border-b border-[#f0f0f0] flex items-center gap-2 animate-fadeIn">
+                    <span className="text-xs text-[#5e5e5e] font-medium w-12">Cc</span>
+                    <input
+                      type="email"
+                      value={cc}
+                      onChange={(e) => setCc(e.target.value)}
+                      placeholder="Cc recipients"
+                      className="flex-1 text-sm outline-none text-[#1f1f1f] py-1 bg-transparent"
+                    />
+                    <button onClick={() => { setShowCc(false); setCc(""); }} className="text-[#888] hover:text-black text-xs">✕</button>
+                  </div>
+                )}
+
+                {/* BCC Field */}
+                {showBcc && (
+                  <div className="px-4 py-2 border-b border-[#f0f0f0] flex items-center gap-2 animate-fadeIn">
+                    <span className="text-xs text-[#5e5e5e] font-medium w-12">Bcc</span>
+                    <input
+                      type="email"
+                      value={bcc}
+                      onChange={(e) => setBcc(e.target.value)}
+                      placeholder="Bcc recipients"
+                      className="flex-1 text-sm outline-none text-[#1f1f1f] py-1 bg-transparent"
+                    />
+                    <button onClick={() => { setShowBcc(false); setBcc(""); }} className="text-[#888] hover:text-black text-xs">✕</button>
+                  </div>
+                )}
+
+                {/* Subject Field */}
+                <div className="px-4 py-2.5 border-b border-[#f0f0f0] flex items-center">
+                  <input
+                    type="text"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    placeholder="Subject"
+                    className="w-full text-sm font-medium outline-none text-[#1f1f1f] bg-transparent"
+                  />
+                </div>
+
+                {/* Email Body Area */}
+                <div className="flex-1 p-4 overflow-y-auto">
+                  <textarea
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    placeholder="Write your email here, or ask JARVIS to draft it..."
+                    className="w-full h-full resize-none text-sm leading-relaxed outline-none text-[#1f1f1f] bg-transparent font-normal"
+                  />
+                </div>
+
+                {/* Gmail Bottom Action Toolbar */}
+                <div className="bg-[#f9fbfd] px-4 py-3 border-t border-[#e0e2ec] flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {/* Blue Send Button */}
+                    <button
+                      onClick={handleSendEmail}
+                      disabled={status === "sending"}
+                      className={`google-sans bg-[#0b57d0] hover:bg-[#0842a0] active:scale-95 text-white font-medium px-6 py-2.5 rounded-full flex items-center gap-2 shadow-md transition-all text-sm ${
+                        status === "sending" ? "opacity-75 cursor-not-allowed" : ""
+                      }`}
+                    >
+                      {status === "sending" ? (
+                        <>
+                          <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          Sending…
+                        </>
+                      ) : (
+                        <>
+                          Send
+                          <span className="material-symbols-outlined text-[18px]">send</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Toolbar icons */}
+                    <div className="hidden sm:flex items-center gap-1 text-[#444746] pl-2 border-l border-[#d3d6e0]">
+                      <button className="p-2 hover:bg-[#e9eef6] rounded-full" title="Formatting options">
+                        <span className="material-symbols-outlined text-[20px]">format_color_text</span>
+                      </button>
+                      <button className="p-2 hover:bg-[#e9eef6] rounded-full" title="Attach files">
+                        <span className="material-symbols-outlined text-[20px]">attach_file</span>
+                      </button>
+                      <button className="p-2 hover:bg-[#e9eef6] rounded-full" title="Insert link">
+                        <span className="material-symbols-outlined text-[20px]">link</span>
+                      </button>
+                      <button className="p-2 hover:bg-[#e9eef6] rounded-full" title="Insert emoji">
+                        <span className="material-symbols-outlined text-[20px]">mood</span>
+                      </button>
+                      <button className="p-2 hover:bg-[#e9eef6] rounded-full" title="Insert photo">
+                        <span className="material-symbols-outlined text-[20px]">image</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Right Actions */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleCopyText(body)}
+                      title="Copy body text"
+                      className="p-2 text-[#444746] hover:bg-[#e9eef6] rounded-full"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">content_copy</span>
+                    </button>
+                    <button
+                      onClick={() => { setTo(""); setSubject(""); setBody(""); showNotification("Draft discarded", "info"); }}
+                      title="Discard draft"
+                      className="p-2 text-[#444746] hover:bg-[#fee2e2] hover:text-[#dc2626] rounded-full transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">delete</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── CREATIVE STUDIO VIEW (POEMS / LETTERS / ESSAYS) ── */}
+            {tab === "studio" && (
+              <div className="w-full max-w-4xl h-[84vh] bg-white rounded-2xl shadow-xl border border-[#e5e7eb] flex flex-col overflow-hidden">
+                {/* Header */}
+                <div className="bg-[#f8fafc] px-6 py-4 border-b border-[#e2e8f0] flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-indigo-600 text-2xl">auto_stories</span>
+                    <div>
+                      <input
+                        type="text"
+                        value={studioTitle}
+                        onChange={(e) => setStudioTitle(e.target.value)}
+                        placeholder="Piece Title (e.g. Whispers of the Cosmos)"
+                        className="google-sans text-lg font-semibold text-[#0f172a] bg-transparent outline-none w-80"
+                      />
+                      <div className="text-xs text-[#64748b] flex items-center gap-2 mt-0.5">
+                        <span className="uppercase tracking-wider font-semibold text-indigo-600">{studioCategory}</span>
+                        <span>•</span>
+                        <span>{studioContent.split(/\s+/).filter(Boolean).length} words</span>
+                        <span>•</span>
+                        <span>{studioContent.length} characters</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setStudioSerif(!studioSerif)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        studioSerif ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {studioSerif ? "Serif Font" : "Sans Font"}
+                    </button>
+                    <button
+                      onClick={() => handleCopyText(studioContent)}
+                      className="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 flex items-center gap-1.5 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-sm">content_copy</span>
+                      Copy
+                    </button>
+                    <button
+                      onClick={handleSaveStudioToDesktop}
+                      className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-sm transition-all"
+                    >
+                      <span className="material-symbols-outlined text-sm">download</span>
+                      Save to Desktop
+                    </button>
+                  </div>
+                </div>
+
+                {/* Editor Area */}
+                <div className="flex-1 p-8 md:p-12 overflow-y-auto bg-[#fafafa]">
+                  <textarea
+                    value={studioContent}
+                    onChange={(e) => setStudioContent(e.target.value)}
+                    placeholder="Enter or generate your creative piece, poem, letter, or notes here..."
+                    className={`w-full h-full resize-none text-base md:text-lg leading-relaxed outline-none text-[#1e293b] bg-transparent ${
+                      studioSerif ? "serif-font" : "font-sans"
+                    }`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Toast / Snackbar Notification */}
+          {toast && (
+            <div className={`fixed bottom-6 left-8 px-5 py-3 rounded-lg shadow-xl text-white text-sm font-medium flex items-center gap-3 z-50 animate-bounce ${
+              toast.type === "error" ? "bg-[#b3261e]" : toast.type === "info" ? "bg-[#1f1f1f]" : "bg-[#1e1e1e]"
+            }`}>
+              <span>{toast.msg}</span>
+              <button onClick={() => setToast(null)} className="text-slate-400 hover:text-white text-xs">✕</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

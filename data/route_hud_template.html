@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS // TACTICAL NAVIGATION & ROUTE HUD</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --pri: #00d4ff;
+      --pri-dim: #007a99;
+      --pri-glow: rgba(0, 212, 255, 0.35);
+      --acc: #ff6b00;
+      --acc-glow: rgba(255, 107, 0, 0.4);
+      --green: #00ff88;
+      --green-glow: rgba(0, 255, 136, 0.35);
+      --bg: #000810;
+      --panel: rgba(1, 15, 25, 0.90);
+      --border: rgba(0, 212, 255, 0.25);
+    }
+    
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    
+    body {
+      background-color: var(--bg);
+      color: #8ffcff;
+      font-family: 'Rajdhani', sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .font-hud { font-family: 'Orbitron', sans-serif; }
+    .font-mono-hud { font-family: 'Share Tech Mono', monospace; }
+
+    /* Holographic scanlines */
+    .scanlines {
+      background: linear-gradient(
+        rgba(18, 16, 16, 0) 50%, 
+        rgba(0, 212, 255, 0.02) 50%
+      ), linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 0.015),
+        rgba(0, 255, 0, 0.01),
+        rgba(0, 0, 255, 0.015)
+      );
+      background-size: 100% 3px, 6px 100%;
+      pointer-events: none;
+    }
+
+    .hud-panel {
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      box-shadow: 0 0 25px rgba(0, 212, 255, 0.08), inset 0 0 15px rgba(0, 212, 255, 0.04);
+      position: relative;
+    }
+
+    .hud-panel::before {
+      content: '';
+      position: absolute;
+      top: -1px; left: -1px; width: 8px; height: 8px;
+      border-top: 2px solid var(--pri);
+      border-left: 2px solid var(--pri);
+    }
+    .hud-panel::after {
+      content: '';
+      position: absolute;
+      bottom: -1px; right: -1px; width: 8px; height: 8px;
+      border-bottom: 2px solid var(--pri);
+      border-right: 2px solid var(--pri);
+    }
+
+    .glow-cyan {
+      text-shadow: 0 0 12px rgba(0, 212, 255, 0.8), 0 0 25px rgba(0, 212, 255, 0.4);
+    }
+    .glow-orange {
+      text-shadow: 0 0 12px rgba(255, 107, 0, 0.8), 0 0 25px rgba(255, 107, 0, 0.4);
+    }
+    .glow-green {
+      text-shadow: 0 0 12px rgba(0, 255, 136, 0.8), 0 0 25px rgba(0, 255, 136, 0.4);
+    }
+
+    /* Leaflet Dark Customization — 100% Clean, No Watermark */
+    .leaflet-container {
+      background: #000810 !important;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .leaflet-tile {
+      filter: brightness(0.7) invert(1) contrast(3.5) hue-rotate(185deg) saturate(0.2) !important;
+    }
+    .leaflet-control-attribution {
+      display: none !important;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 20, 35, 0.5);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--pri-dim);
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- ROUTE_DATA_INJECTION_PLACEHOLDER -->
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function JarvisRouteHUD() {
+      const data = window.JARVIS_ROUTE_DATA || {
+        origin: "Auto-detected Location",
+        origin_coords: [28.940266, 77.224831],
+        destination: "Target Destination",
+        destination_coords: [28.6328, 77.2195],
+        distance_km: 38.4,
+        duration_mins: 52,
+        duration_str: "52 MINS",
+        travel_mode: "driving",
+        traffic_level: "MODERATE",
+        traffic_delay_mins: 6,
+        route_name: "Optimal Route",
+        steps: [],
+        route_geometry: []
+      };
+
+      const [mode, setMode] = useState(data.travel_mode || "driving");
+      const [time, setTime] = useState(new Date().toLocaleTimeString());
+      const mapContainerRef = useRef(null);
+      const mapInstanceRef = useRef(null);
+
+      useEffect(() => {
+        const timer = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      useEffect(() => {
+        if (!mapContainerRef.current) return;
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.remove();
+        }
+
+        const map = L.map(mapContainerRef.current, {
+          zoomControl: false,
+          attributionControl: false
+        });
+
+        // Use Esri World Dark Gray / OSM tile layer (NO API KEY REQUIRED / NO WATERMARK)
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+          maxZoom: 16
+        }).addTo(map);
+
+        const startCoords = data.origin_coords || [28.94, 77.22];
+        const endCoords = data.destination_coords || [28.63, 77.21];
+
+        const startIcon = L.divIcon({
+          className: 'custom-start-marker',
+          html: '<div style="width:24px;height:24px;border-radius:50%;background:#00d4ff;border:3px solid white;box-shadow:0 0 18px #00d4ff;display:flex;align-items:center;justify-content:center;"><div style="width:6px;height:6px;border-radius:50%;background:#000810;"></div></div>',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+
+        const endIcon = L.divIcon({
+          className: 'custom-end-marker',
+          html: '<div style="width:24px;height:24px;border-radius:50%;background:#ff6b00;border:3px solid white;box-shadow:0 0 18px #ff6b00;display:flex;align-items:center;justify-content:center;"><div style="width:6px;height:6px;border-radius:50%;background:#000810;"></div></div>',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+
+        L.marker(startCoords, { icon: startIcon }).addTo(map).bindPopup('<b>ORIGIN (LIVE GPS)</b><br>' + data.origin);
+        L.marker(endCoords, { icon: endIcon }).addTo(map).bindPopup('<b>DESTINATION</b><br>' + data.destination);
+
+        if (data.route_geometry && data.route_geometry.length > 0) {
+          L.polyline(data.route_geometry, {
+            color: mode === 'transit' ? '#ffe119' : '#00d4ff',
+            weight: 8,
+            opacity: 0.35,
+            lineCap: 'round',
+            lineJoin: 'round'
+          }).addTo(map);
+
+          const polyline = L.polyline(data.route_geometry, {
+            color: mode === 'transit' ? '#ffffff' : '#8ffcff',
+            weight: 3.5,
+            opacity: 0.95,
+            dashArray: mode === 'transit' ? '8, 8' : null,
+            lineCap: 'round',
+            lineJoin: 'round'
+          }).addTo(map);
+
+          map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+        } else {
+          map.setView(startCoords, 10);
+        }
+
+        mapInstanceRef.current = map;
+        return () => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
+          }
+        };
+      }, [mode]);
+
+      const getTrafficColor = (level) => {
+        if (level === 'LOW' || level === 'CLEAR') return 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10 glow-green';
+        if (level === 'HEAVY' || level === 'CONGESTED' || level.includes('HEAVY')) return 'text-rose-400 border-rose-500/40 bg-rose-500/10 glow-orange';
+        return 'text-amber-400 border-amber-500/40 bg-amber-500/10 glow-orange';
+      };
+
+      return (
+        <div className="relative w-full h-full flex flex-col scanlines overflow-hidden p-3 gap-3">
+          <header className="hud-panel w-full px-5 py-2.5 flex items-center justify-between rounded border border-cyan-500/30">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-cyan-950/60 border border-cyan-400/40 flex items-center justify-center shadow-[0_0_15px_rgba(0,212,255,0.3)]">
+                <svg className="w-5 h-5 text-cyan-400 animate-spin" style={{ animationDuration: '12s' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-hud font-bold text-sm tracking-wider text-cyan-400 glow-cyan">JARVIS MARK LIII</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono-hud border border-cyan-500/40">HOLOGRAPHIC ROUTE HUD</span>
+                </div>
+                <div className="text-[11px] text-cyan-300/60 font-mono-hud tracking-wide">
+                  SYSTEM STATUS: <span className="text-emerald-400 font-semibold">ONLINE // SATELLITE GPS ACTIVE</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="hidden md:flex items-center gap-3 font-mono-hud text-xs bg-cyan-950/40 px-4 py-1.5 rounded-full border border-cyan-500/20">
+              <span className="text-cyan-400 truncate max-w-[140px]">{data.origin.split(',')[0]}</span>
+              <span className="text-orange-400 animate-pulse">➔➔➔</span>
+              <span className="text-white font-semibold truncate max-w-[160px]">{data.destination}</span>
+            </div>
+
+            <div className="flex items-center gap-4 font-mono-hud">
+              <div className="text-right">
+                <div className="text-sm font-bold text-cyan-300 glow-cyan">{time}</div>
+                <div className="text-[10px] text-cyan-500/70">SAT-LOCK: LIVE</div>
+              </div>
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#00ff88] animate-ping"></div>
+            </div>
+          </header>
+
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0">
+            <div className="lg:col-span-4 flex flex-col gap-3 overflow-y-auto pr-1">
+              <div className="hud-panel p-4 rounded flex flex-col gap-3">
+                <div className="text-xs font-mono-hud text-cyan-400/80 flex items-center justify-between border-b border-cyan-500/20 pb-2">
+                  <span>TELEMETRY METRICS</span>
+                  <span className="text-orange-400 font-semibold">ROUTE COMPUTED</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="bg-cyan-950/30 p-3 rounded border border-cyan-500/25 relative overflow-hidden">
+                    <div className="text-[10px] font-mono-hud text-cyan-400 tracking-wider">TOTAL DISTANCE</div>
+                    <div className="text-2xl font-hud font-bold text-cyan-300 glow-cyan mt-1">
+                      {data.distance_km} <span className="text-xs font-normal text-cyan-400/80">KM</span>
+                    </div>
+                    <div className="w-full bg-cyan-950/80 h-1 rounded mt-2 overflow-hidden">
+                      <div className="bg-cyan-400 h-full w-[85%] shadow-[0_0_8px_#00d4ff]"></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-cyan-950/30 p-3 rounded border border-cyan-500/25 relative overflow-hidden">
+                    <div className="text-[10px] font-mono-hud text-cyan-400 tracking-wider">ESTIMATED TIME</div>
+                    <div className="text-2xl font-hud font-bold text-orange-400 glow-orange mt-1">
+                      {data.duration_str}
+                    </div>
+                    <div className="w-full bg-cyan-950/80 h-1 rounded mt-2 overflow-hidden">
+                      <div className="bg-orange-500 h-full w-[70%] shadow-[0_0_8px_#ff6b00]"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`p-3 rounded border flex items-center justify-between font-mono-hud text-xs ${getTrafficColor(data.traffic_level)}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-current shadow-[0_0_8px_currentColor] animate-pulse"></span>
+                    <span className="font-bold">TRAFFIC: {data.traffic_level}</span>
+                  </div>
+                  <span className="text-[11px] opacity-80">+{data.traffic_delay_mins || 0}m delay</span>
+                </div>
+
+                <div className="bg-cyan-950/20 p-3 rounded border border-cyan-500/20 text-xs font-mono-hud flex flex-col gap-2.5">
+                  <div>
+                    <div className="text-[10px] text-cyan-500 uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> LIVE ORIGIN (AUTO-DETECTED)
+                    </div>
+                    <div className="text-white font-semibold text-xs mt-0.5 truncate">{data.origin}</div>
+                    <div className="text-[10px] text-cyan-400/60 font-mono-hud">
+                      LAT: {data.origin_coords ? data.origin_coords[0].toFixed(4) : '28.9402'}° | LON: {data.origin_coords ? data.origin_coords[1].toFixed(4) : '77.2248'}°
+                    </div>
+                  </div>
+
+                  <div className="border-t border-cyan-500/15 pt-2">
+                    <div className="text-[10px] text-orange-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> TARGET DESTINATION
+                    </div>
+                    <div className="text-white font-semibold text-xs mt-0.5 truncate">{data.destination}</div>
+                    <div className="text-[10px] text-orange-400/60 font-mono-hud">
+                      LAT: {data.destination_coords ? data.destination_coords[0].toFixed(4) : '28.6328'}° | LON: {data.destination_coords ? data.destination_coords[1].toFixed(4) : '77.2195'}°
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hud-panel p-3.5 rounded flex-1 flex flex-col gap-2 min-h-[160px]">
+                <div className="text-xs font-mono-hud text-cyan-400 flex items-center justify-between border-b border-cyan-500/20 pb-1.5">
+                  <span>ROUTE WAYPOINTS & GUIDANCE</span>
+                  <span className="text-[10px] text-cyan-400/70 font-mono-hud">{data.steps ? data.steps.length : 0} SEGMENTS</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 text-xs font-mono-hud">
+                  {data.steps && data.steps.map((step, idx) => (
+                    <div key={idx} className="p-2 rounded bg-cyan-950/30 border border-cyan-500/15 hover:border-cyan-400/40 transition-colors">
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="font-bold text-cyan-300">NODE 0{idx + 1} {step.line ? `// ${step.line}` : ''}</span>
+                        <span className="text-orange-400 text-[10px]">{step.distance} • {step.time}</span>
+                      </div>
+                      <p className="text-cyan-100/90 text-[11px] leading-relaxed">{step.instruction}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="lg:col-span-8 flex flex-col gap-3 min-h-0">
+              <div className="hud-panel flex-1 rounded p-1 flex flex-col relative overflow-hidden">
+                <div className="absolute top-4 right-4 z-[500] bg-black/80 backdrop-blur-md p-2.5 rounded border border-cyan-500/40 flex items-center gap-3 font-mono-hud text-xs shadow-xl">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                    <span className="text-cyan-300">GEO-PATH ACTIVE</span>
+                  </div>
+                  <div className="h-4 w-[1px] bg-cyan-500/40"></div>
+                  <span className="text-orange-400 font-bold">{data.distance_km} KM</span>
+                </div>
+
+                <div ref={mapContainerRef} className="w-full h-full rounded z-0"></div>
+
+                <div className="absolute bottom-3 left-3 right-3 z-[500] bg-black/85 backdrop-blur-md px-4 py-2 rounded border border-cyan-500/30 flex items-center justify-between text-xs font-mono-hud">
+                  <div className="flex items-center gap-4 text-cyan-400/90">
+                    <span>PATH: <strong className="text-white">{data.route_name || 'Direct Highway'}</strong></span>
+                    <span className="hidden sm:inline text-cyan-500/60">|</span>
+                    <span className="hidden sm:inline">MODE: <strong className="text-orange-400 uppercase">{mode}</strong></span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-cyan-300/70">
+                    <span>JARVIS TACTICAL GUIDANCE READY</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<JarvisRouteHUD />);
+  </script>
+</body>
+</html>

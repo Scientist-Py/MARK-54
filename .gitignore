@@ -1,0 +1,47 @@
+# ── MARK-54 Secrets & Personal Data ──
+config/api_keys.json
+config/certs/
+config/whatsapp_web/
+config/active_draft.json
+config/token.json
+token.json
+*token*.json
+*credentials*.json
+credentials.json
+.env
+.env.*
+
+# ── Personal Memory ──
+memory/long_term.json
+memory/*.db
+memory/last_route.json
+
+# ── Python Build & Cache ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── Virtual Environments ──
+.venv/
+venv/
+env/
+ENV/
+
+# ── Editors & OS ──
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Runtime Output ──
+*.log
+logs/
+downloads/
+screenshots/
