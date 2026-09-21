@@ -362,6 +362,7 @@ TOOL = {
             },
             "labels": {
                 "type": "ARRAY",
+                "items": {"type": "STRING"},
                 "description": "List of label strings for issues (e.g. ['bug', 'enhancement'])."
             },
             "query": {
