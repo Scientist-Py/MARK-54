@@ -61,6 +61,9 @@ LANDMARKS: dict[str, list[int]] = {
                  269, 267, 0, 37, 39, 40, 185],
     "lips_in": [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310,
                 311, 312, 13, 82, 81, 80, 191],
+    "nose_piriform": [168, 6, 197, 195, 5, 4, 1, 19, 94, 2],
+    "cheek_l": [116, 123, 147, 213, 192, 214],
+    "cheek_r": [345, 352, 376, 433, 416, 434],
 }
 
 # Jaw rig, in normalised units. The pivot sits between the ears, which is where

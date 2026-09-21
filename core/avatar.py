@@ -123,8 +123,10 @@ class HoloAvatar:
     # Look: True paints a lit, solid head with a wireframe over it; False is a
     # see-through glass wireframe. Flip here, or per instance.
     shaded = True
+    style = "skull"  # "skull" (Cyber-Skull), "skin" (Human Face), "holo" (Hologram)
 
-    def __init__(self) -> None:
+    def __init__(self, style: str = "skull") -> None:
+        self.style = style
         mesh = get_head_mesh()
         self._v0 = mesh["verts"]
         self._n0 = mesh["normals"]
@@ -144,6 +146,7 @@ class HoloAvatar:
         # keeps an open mouth from reading as a hole punched in the face.
         lips_in = mesh["landmarks"]["lips_in"]
         self._lip_up = np.concatenate([lips_in[10:], lips_in[:1]])
+        self._lip_dn = np.array(lips_in[:11])
 
         # Crown (+1.0) down to the bottom of the neck, in head-half-heights.
         # Callers size the head to the room they have with this.
@@ -506,10 +509,66 @@ class HoloAvatar:
         xs = cx + verts[:, 0] * k
         ys = cy - verts[:, 1] * k
 
-        if self.shaded:
-            self._paint_surface(p, xs, ys, norms, verts, primary, bg, amp)
-        self._paint_wire(p, xs, ys, norms, verts, primary, bg, amp)
-        self._paint_features(p, xs, ys, norms, r, primary, accent, bg, amp)
+        if self.style == "skull":
+            if self.shaded:
+                self._paint_skull_surface(p, xs, ys, norms, verts, primary, bg, amp)
+            self._paint_wire(p, xs, ys, norms, verts, primary, bg, amp)
+            self._paint_skull_features(p, xs, ys, norms, r, primary, accent, bg, amp)
+        elif self.style == "holo":
+            self._paint_wire(p, xs, ys, norms, verts, primary, bg, amp)
+            self._paint_features(p, xs, ys, norms, r, primary, accent, bg, amp)
+        else:
+            if self.shaded:
+                self._paint_surface(p, xs, ys, norms, verts, primary, bg, amp)
+            self._paint_wire(p, xs, ys, norms, verts, primary, bg, amp)
+            self._paint_features(p, xs, ys, norms, r, primary, accent, bg, amp)
+
+    def _paint_skull_surface(self, p: QPainter, xs, ys, norms, verts,
+                             primary: QColor, bg: QColor, amp: float) -> None:
+        """High-contrast anatomical bone & titanium facet lighting for Cyber-Skull."""
+        a, b, c = self._fa, self._fb, self._fc
+
+        fn = np.cross(verts[b] - verts[a], verts[c] - verts[a])
+        fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-9)
+
+        ref = norms[a] + norms[b] + norms[c]
+        fn *= np.sign((fn * ref).sum(1))[:, None]
+
+        nz = fn[:, 2]
+        area = np.abs((xs[b] - xs[a]) * (ys[c] - ys[a])
+                      - (xs[c] - xs[a]) * (ys[b] - ys[a]))
+        vis = np.flatnonzero((nz > 0.015) & (area > 3.0))
+        if vis.size == 0:
+            return
+        fn = fn[vis]
+        nz = nz[vis]
+
+        ax, ay = xs[a][vis], ys[a][vis]
+        bx, by = xs[b][vis], ys[b][vis]
+        cxx, cyy = xs[c][vis], ys[c][vis]
+
+        # Specular bone/metallic highlights with sharp rim
+        fres = np.clip(1.0 - nz, 0.0, 2.0) ** 2.0
+        lam = np.clip(fn[:, 0] * -0.55 + fn[:, 1] * 0.58 + nz * 0.60, 0.0, 1.0)
+        bright = 0.20 + 0.28 * fres + 0.75 * (lam ** 1.35)
+        bright *= (self._fade[a][vis] + self._fade[b][vis] + self._fade[c][vis]) / 3.0
+        bright *= 0.90 + 0.28 * amp
+
+        idx = np.clip((bright * _LUT_N).astype(np.int32), 0, _LUT_N - 1)
+
+        fz = (verts[a, 2][vis] + verts[b, 2][vis] + verts[c, 2][vis]) * (1.0 / 3.0)
+        order = np.argsort(self._fgroup[vis] * 1000.0 + fz, kind="stable")
+        tris = np.stack([ax, ay, bx, by, cxx, cyy], axis=1)[order].tolist()
+        shade = idx[order].tolist()
+        lut = self._lut(bg, primary)
+
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        p.setPen(Qt.PenStyle.NoPen)
+        for q, sh in zip(tris, shade):
+            p.setBrush(lut[sh])
+            p.drawPolygon(QPolygonF([QPointF(q[0], q[1]), QPointF(q[2], q[3]),
+                                     QPointF(q[4], q[5])]))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
     def _paint_surface(self, p: QPainter, xs, ys, norms, verts,
                        primary: QColor, bg: QColor, amp: float) -> None:
@@ -713,3 +772,161 @@ class HoloAvatar:
         p.drawPolygon(inner)                       # lip edge
         p.setPen(QPen(_c(primary, 110 * face), 1.1))
         p.drawPolygon(self._ring(xs, ys, lm["lips_out"]))
+
+    def _paint_skull_features(self, p: QPainter, xs, ys, norms, r: float,
+                              primary: QColor, accent: QColor, bg: QColor,
+                              amp: float) -> None:
+        """Deep anatomical eye orbits, glowing cyber-optic reticles, piriform nasal aperture,
+        zygomatic cheek arches, and maxillary/mandibular skull teeth that articulate with speech.
+        """
+        face = max(0.0, math.cos(self._yaw) * math.cos(self._pitch)) ** 2
+        if face < 0.02:
+            return
+
+        lm = self._lm
+        vis = 1.0 - self._blink
+
+        # ── 1. Orbital Eye Cavities (Hollow Sockets + Cyber-Optic Lenses) ──
+        for key in ("eye_l", "eye_r"):
+            if key not in lm:
+                continue
+            idx = lm[key]
+            ex, ey = xs[idx], ys[idx]
+            mid_y = float(ey.mean())
+            if vis < 0.999:
+                ey = mid_y + (ey - mid_y) * max(0.04, vis)
+            poly = QPolygonF([QPointF(float(a), float(b)) for a, b in zip(ex, ey)])
+
+            # Deep dark orbital cavity shadow
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(_blend(bg, primary, 10)))
+            p.drawPolygon(poly)
+
+            # High-contrast bone orbit perimeter rim
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_c(primary, 240 * face), 1.6))
+            p.drawPolygon(poly)
+
+            if vis > 0.20:
+                br = poly.boundingRect()
+                gx = br.center().x() + self._gaze[0] * br.width() * 0.18
+                gy = br.center().y() + self._gaze[1] * br.height() * 0.22
+                cpt = QPointF(gx, gy)
+                rad = min(br.height() * 0.68, br.width() * 0.24)
+
+                # Outer cyber-optic reticle ring
+                p.setPen(QPen(_c(accent, (160 + 80 * amp) * face * vis), 1.2))
+                p.drawEllipse(cpt, rad, rad * vis)
+
+                # Inner reticle ring
+                p.setPen(QPen(_c(primary, (190 + 65 * amp) * face * vis), 1.0))
+                p.drawEllipse(cpt, rad * 0.55, rad * 0.55 * vis)
+
+                # Target crosshair ticks on optic lens
+                p.setPen(QPen(_c(accent, (200 + 55 * amp) * face * vis), 1.0))
+                tl = rad * 0.28
+                p.drawLine(QLineF(gx - rad - tl, gy, gx - rad + tl, gy))
+                p.drawLine(QLineF(gx + rad - tl, gy, gx + rad + tl, gy))
+                p.drawLine(QLineF(gx, gy - (rad + tl) * vis, gx, gy - (rad - tl) * vis))
+                p.drawLine(QLineF(gx, gy + (rad - tl) * vis, gx, gy + (rad + tl) * vis))
+
+                # Glowing diode pupil / laser core
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(_c(accent, (220 + 35 * amp) * face * vis)))
+                p.drawEllipse(cpt, rad * 0.32, rad * 0.32 * vis)
+
+                # Bright specular pupil point
+                p.setBrush(QBrush(QColor(255, 255, 255, int(250 * face * vis))))
+                p.drawEllipse(QPointF(gx - rad * 0.08, gy - rad * 0.08 * vis), rad * 0.12, rad * 0.12 * vis)
+
+        # ── 2. Brow Ridges (Supraorbital Torus) ──
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_c(primary, 220 * face), 1.8))
+        for key in ("brow_l", "brow_r"):
+            if key in lm:
+                p.drawPolyline(self._ring(xs, ys, lm[key]))
+
+        # ── 3. Nasal Piriform Aperture (Skull Nose Cavity) ──
+        if "nose_piriform" in lm:
+            n_idx = lm["nose_piriform"]
+            n_poly = self._ring(xs, ys, n_idx)
+            # Hollow nasal shadow
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(_blend(bg, primary, 14)))
+            p.drawPolygon(n_poly)
+            # Sharp nasal rim
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_c(primary, 200 * face), 1.4))
+            p.drawPolygon(n_poly)
+            # Septum line
+            if len(n_idx) >= 6:
+                p.setPen(QPen(_c(accent, 140 * face), 1.1))
+                p.drawLine(QLineF(xs[n_idx[0]], ys[n_idx[0]], xs[n_idx[4]], ys[n_idx[4]]))
+
+        # ── 4. Zygomatic Cheek Arches ──
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_c(primary, 160 * face), 1.2))
+        for key in ("cheek_l", "cheek_r"):
+            if key in lm:
+                p.drawPolyline(self._ring(xs, ys, lm[key]))
+
+        # ── 5. Maxillary & Mandibular Skull Teeth (Talking Jaw) ──
+        inner = self._ring(xs, ys, lm["lips_in"])
+        open_h = max(2.0, inner.boundingRect().height())
+
+        # Oral cavity depth
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(_blend(bg, primary, 12 + 20 * self._mouth)))
+        p.drawPolygon(inner)
+
+        # Throat glowing vocal emitter
+        if self._mouth > 0.02:
+            p.setBrush(QBrush(_c(accent, (50 + 120 * amp) * self._mouth * face)))
+            p.drawPolygon(inner)
+
+        # Upper Teeth Row (Maxilla Arch)
+        ux, uy = xs[self._lip_up], ys[self._lip_up]
+        th_up = max(3.0, open_h * 0.38)
+        pts_up = [QPointF(float(x), float(y)) for x, y in zip(ux, uy)]
+        pts_up += [QPointF(float(x), float(y) + th_up) for x, y in zip(ux[::-1], uy[::-1])]
+        p.setBrush(QBrush(_blend(bg, primary, 190 + 55 * self._mouth)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawPolygon(QPolygonF(pts_up))
+
+        # Upper interdental teeth separator lines
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_c(bg, 230), 1.1))
+        for i in range(1, len(ux) - 1, 2):
+            p.drawLine(QLineF(ux[i], uy[i], ux[i], uy[i] + th_up))
+
+        # Upper arch border
+        p.setPen(QPen(_c(primary, 230 * face), 1.2))
+        p.drawPolyline(self._ring(xs, ys, self._lip_up))
+
+        # Lower Teeth Row (Mandible Arch - Articulates Down with Speech)
+        if hasattr(self, "_lip_dn"):
+            lx, ly = xs[self._lip_dn], ys[self._lip_dn]
+            th_dn = max(3.0, open_h * 0.34)
+            pts_dn = [QPointF(float(x), float(y)) for x, y in zip(lx, ly)]
+            pts_dn += [QPointF(float(x), float(y) - th_dn) for x, y in zip(lx[::-1], ly[::-1])]
+            p.setBrush(QBrush(_blend(bg, primary, 175 + 50 * self._mouth)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawPolygon(QPolygonF(pts_dn))
+
+            # Lower interdental teeth separator lines
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(_c(bg, 230), 1.1))
+            for i in range(1, len(lx) - 1, 2):
+                p.drawLine(QLineF(lx[i], ly[i], lx[i], ly[i] - th_dn))
+
+            # Lower arch border
+            p.setPen(QPen(_c(primary, 210 * face), 1.2))
+            p.drawPolyline(self._ring(xs, ys, self._lip_dn))
+
+        # Outer Jaw / Lip Contour
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_c(primary, (160 + 80 * self._mouth) * face), 1.3))
+        p.drawPolygon(inner)
+        p.setPen(QPen(_c(primary, 130 * face), 1.1))
+        p.drawPolygon(self._ring(xs, ys, lm["lips_out"]))
+
