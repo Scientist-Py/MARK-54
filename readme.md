@@ -1,7 +1,7 @@
 # ⚙️ MARK LIV (54)
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
+### The Ultimate Cross-Platform Personal AI Assistant — By Tushar Chauhan (Scientist-Py)
 
-> 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
+> 🚀 **[MARK-54 Official Repository](https://github.com/Scientist-Py/MARK-54.git)**
 
 A real-time voice AI that can hear, see, speak, and control your computer — on any OS. Supports Windows, macOS, and Linux. Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
 
@@ -278,8 +278,8 @@ It is held in memory only, deliberately: writing it to disk would make a fresh l
 ## ⚡ Quick Start
 
 ```bash
-git clone https://github.com/FatihMakes/Mark-LIV.git
-cd Mark-LIV
+git clone https://github.com/Scientist-Py/MARK-54.git
+cd MARK-54
 python setup.py        # installs deps for YOUR OS + the browser automation engine
 python main.py
 ```
@@ -396,12 +396,12 @@ Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licens
 
 ---
 
-## 👤 Connect with the Creator
-
-Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
+## 👤 Author & Maintainer
+ 
+Engineered and maintained by **Tushar Chauhan** ([@Scientist-Py](https://github.com/Scientist-Py)).
+⭐ **Star the repository to support ongoing development.**
 
 | Platform | Link |
 | --- | --- |
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+| GitHub | [@Scientist-Py](https://github.com/Scientist-Py) |
+| Repository | [MARK-54](https://github.com/Scientist-Py/MARK-54.git) |
