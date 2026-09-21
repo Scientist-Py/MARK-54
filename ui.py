@@ -34,6 +34,11 @@ from PyQt6.QtWidgets import (
 )
 
 try:
+    from core.avatar_realistic import RealisticAvatar
+except Exception:
+    RealisticAvatar = None
+
+try:
     from core.avatar import HoloAvatar
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
@@ -391,10 +396,14 @@ class HudCanvas(QWidget):
         self.state    = "INITIALISING"
         self._assistant_name = assistant_name
 
-        # The holographic head that fills the HUD. If it could not be imported
-        # we fall back to the old glowing core so the panel is never empty.
+        # The holographic/realistic head that fills the HUD.
         self._avatar = None
-        if HoloAvatar is not None:
+        if RealisticAvatar is not None:
+            try:
+                self._avatar = RealisticAvatar()
+            except Exception:
+                self._avatar = None
+        if self._avatar is None and HoloAvatar is not None:
             try:
                 self._avatar = HoloAvatar()
             except Exception:
@@ -870,50 +879,51 @@ class HudCanvas(QWidget):
             _r = min(W * 0.46, _band_h / 2.0)
             self._paint_core(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
 
-        # status text
-        sy = _sy_status
-        if self.muted:
-            txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
-        elif self.speaking:
-            txt, col = "●  SPEAKING",  qcol(C.ACC)
-        elif self.state == "THINKING":
-            sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
-        elif self.state == "PROCESSING":
-            sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
-        elif self.state == "LISTENING":
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
-        else:
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  {self.state}", qcol(C.PRI)
-
-        p.setPen(QPen(col, 1))
-        p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
-        p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
-
-        # waveform — reacts to the real audio level (mic while listening,
-        # JARVIS's own voice while speaking). Falls back to a gentle idle
-        # ripple when there's no sound. _amp_disp is the smoothed 0–1 level.
-        wy = sy + 30
-        N, bw = 36, 8
-        wx0 = (W - N * bw) / 2
-        amp = self._amp_disp
-        mid = (N - 1) / 2.0
-        for i in range(N):
+        # status text & waveform (for reactor core / legacy hud mode only)
+        if self.hud_style != "face":
+            sy = _sy_status
             if self.muted:
-                hgt, cl = 2, qcol(C.MUTED_C)
+                txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
+            elif self.speaking:
+                txt, col = "●  SPEAKING",  qcol(C.ACC)
+            elif self.state == "THINKING":
+                sym = "◈" if self._blink else "◇"
+                txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
+            elif self.state == "PROCESSING":
+                sym = "▷" if self._blink else "▶"
+                txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
+            elif self.state == "LISTENING":
+                sym = "●" if self._blink else "○"
+                txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
             else:
-                env     = (1.0 - abs(i - mid) / mid) ** 0.7      # center-weighted hump
-                shimmer = 0.55 + 0.45 * math.sin(self._tick * 0.18 + i * 0.7)
-                idle    = 3.0 + 2.0 * math.sin(self._tick * 0.09 + i * 0.6)
-                hgt     = int(max(2, min(24, idle + amp * 22.0 * env * shimmer)))
-                if amp > 0.05:
-                    cl = qcol(C.PRI) if hgt > 12 else qcol(C.PRI_DIM)
+                sym = "●" if self._blink else "○"
+                txt, col = f"{sym}  {self.state}", qcol(C.PRI)
+
+            p.setPen(QPen(col, 1))
+            p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+            p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
+
+            # waveform — reacts to the real audio level (mic while listening,
+            # JARVIS's own voice while speaking). Falls back to a gentle idle
+            # ripple when there's no sound. _amp_disp is the smoothed 0–1 level.
+            wy = sy + 30
+            N, bw = 36, 8
+            wx0 = (W - N * bw) / 2
+            amp = self._amp_disp
+            mid = (N - 1) / 2.0
+            for i in range(N):
+                if self.muted:
+                    hgt, cl = 2, qcol(C.MUTED_C)
                 else:
-                    cl = qcol(C.BORDER_B)
-            p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
+                    env     = (1.0 - abs(i - mid) / mid) ** 0.7      # center-weighted hump
+                    shimmer = 0.55 + 0.45 * math.sin(self._tick * 0.18 + i * 0.7)
+                    idle    = 3.0 + 2.0 * math.sin(self._tick * 0.09 + i * 0.6)
+                    hgt     = int(max(2, min(24, idle + amp * 22.0 * env * shimmer)))
+                    if amp > 0.05:
+                        cl = qcol(C.PRI) if hgt > 12 else qcol(C.PRI_DIM)
+                    else:
+                        cl = qcol(C.BORDER_B)
+                p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
 
         p.end()   # end deterministically so the backing store never flushes an active painter
 
@@ -984,96 +994,85 @@ class LogWidget(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        # Cap scrollback so an hours-long session can't grow the document
-        # without bound — keeps memory flat and every insert cheap. Oldest
-        # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Segoe UI", 9))
         self.setStyleSheet(f"""
             QTextEdit {{
-                background: {C.PANEL};
+                background: #020b12;
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
-                border-radius: 4px;
-                padding: 6px;
+                border-radius: 8px;
+                padding: 8px;
                 selection-background-color: {C.PRI_GHO};
             }}
             QScrollBar:vertical {{
                 background: {C.BG};
-                width: 8px;
+                width: 6px;
                 border: none;
             }}
             QScrollBar::handle:vertical {{
                 background: {C.BORDER_B};
-                border-radius: 4px;
+                border-radius: 3px;
                 min-height: 20px;
             }}
         """)
         self._queue: list[str] = []
-        self._typing  = False
-        self._text    = ""
-        self._pos     = 0
-        self._tag     = "sys"
-        self._ai_name_lc = "jarvis"   # updated when assistant name changes
-        self._tmr = QTimer(self)
-        self._tmr.timeout.connect(self._step)
+        self._typing = False
+        self._ai_name_lc = "jarvis"
         self._sig.connect(self._enqueue)
 
     def append_log(self, text: str):
         self._sig.emit(text)
 
     def _enqueue(self, text: str):
-        self._queue.append(text)
-        if not self._typing:
-            self._next()
+        self._render_message(text)
 
-    def _next(self):
-        if not self._queue:
-            self._typing = False
-            return
-        self._typing = True
-        self._text   = self._queue.pop(0)
-        self._pos    = 0
-        tl = self._text.lower()
+    def _render_message(self, text: str):
+        import html
+        now_str = time.strftime("%I:%M %p").lstrip("0")
+        tl = text.strip()
+        tl_low = tl.lower()
         _ai_pfx = f"{self._ai_name_lc}:"
-        if   tl.startswith("you:"):                              self._tag = "you"
-        elif tl.startswith(_ai_pfx) or tl.startswith("jarvis:"): self._tag = "ai"
-        elif tl.startswith("file:"):                             self._tag = "file"
-        elif "err" in tl:                                        self._tag = "err"
-        else:                                                    self._tag = "sys"
-        self._tmr.start(6)
 
-    def _step(self):
-        if self._pos < len(self._text):
-            ch  = self._text[self._pos]
-            cur = self.textCursor()
-            fmt = cur.charFormat()
-            col = {
-                "you":  qcol(C.WHITE),
-                "ai":   qcol(C.PRI),
-                "err":  qcol(C.RED),
-                "file": qcol(C.GREEN),
-                # SYS lines are the bulk of the log. Amber fought the cyan HUD
-                # and, being a fixed status colour rather than a hue-linked one,
-                # stayed amber even after the accent picker retinted everything
-                # else. TEXT_MED follows the theme and drops the contrast to a
-                # level you can read past.
-                "sys":  qcol(C.TEXT_MED),
-            }.get(self._tag, qcol(C.TEXT))
-            fmt.setForeground(QBrush(col))
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText(ch, fmt)
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            self._pos += 1
+        cur = self.textCursor()
+        cur.movePosition(cur.MoveOperation.End)
+
+        if tl_low.startswith("you:"):
+            body = tl[4:].strip()
+            body_esc = html.escape(body).replace("\n", "<br>")
+            bubble = f"""
+            <div style="margin: 6px 0; text-align: right;">
+                <div style="display: inline-block; background-color: #07192b; border: 1px solid #14446b; border-radius: 12px; padding: 8px 12px; max-width: 90%; text-align: left;">
+                    <div style="color: #55b7db; font-size: 10px; font-weight: bold; margin-bottom: 2px;">You</div>
+                    <div style="color: #ffffff; font-size: 12px; line-height: 1.35;">{body_esc}</div>
+                    <div style="color: #3b7692; font-size: 9px; text-align: right; margin-top: 3px;">{now_str} ✓✓</div>
+                </div>
+            </div>
+            """
+            cur.insertHtml(bubble)
+        elif tl_low.startswith(_ai_pfx) or tl_low.startswith("jarvis:"):
+            colon_idx = tl.find(":")
+            body = tl[colon_idx + 1:].strip() if colon_idx != -1 else tl
+            body_esc = html.escape(body).replace("\n", "<br>")
+            bubble = f"""
+            <div style="margin: 6px 0; text-align: left;">
+                <div style="display: inline-block; background-color: #0c1824; border: 1px solid #173b57; border-radius: 12px; padding: 8px 12px; max-width: 90%;">
+                    <div style="color: #00d4ff; font-size: 10px; font-weight: bold; margin-bottom: 2px;">JARVIS</div>
+                    <div style="color: #d8f8ff; font-size: 12px; line-height: 1.35;">{body_esc}</div>
+                    <div style="color: #3b7692; font-size: 9px; text-align: right; margin-top: 3px;">{now_str}</div>
+                </div>
+            </div>
+            """
+            cur.insertHtml(bubble)
+        elif "err" in tl_low:
+            body_esc = html.escape(tl)
+            cur.insertHtml(f'<div style="color: #ff4466; font-size: 10px; margin: 3px 0;">⚠ {body_esc}</div>')
         else:
-            self._tmr.stop()
-            cur = self.textCursor()
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText("\n")
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            QTimer.singleShot(20, self._next)
+            body_esc = html.escape(tl)
+            cur.insertHtml(f'<div style="color: #3a8a9a; font-size: 10px; margin: 2px 0;">▸ {body_esc}</div>')
+
+        self.setTextCursor(cur)
+        self.ensureCursorVisible()
 
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
@@ -3630,72 +3629,107 @@ class MainWindow(QMainWindow):
 
     def _build_header(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(54)
-        w.setStyleSheet(f"background: {C.DARK}; border-bottom: 1px solid {C.BORDER_B};")
+        w.setFixedHeight(60)
+        w.setStyleSheet(f"background: #020810; border-bottom: 1px solid #0d263a;")
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(16, 0, 16, 0)
+        lay.setContentsMargins(20, 4, 20, 4)
 
-        def _badge(txt, color=C.TEXT_MED):
-            l = QLabel(txt)
-            l.setFont(QFont("Courier New", 8))
-            l.setStyleSheet(f"color: {color}; background: transparent;")
-            return l
+        # ── Left Column: Live Clock & Date ──
+        left_col = QVBoxLayout()
+        left_col.setSpacing(1)
+        self._clock_lbl = QLabel(time.strftime("%I:%M %p").lstrip("0"))
+        self._clock_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self._clock_lbl.setStyleSheet("color: #e0f8ff; background: transparent;")
+        left_col.addWidget(self._clock_lbl)
 
-        lay.addWidget(_badge(APP_VERSION, C.PRI_DIM))
-        lay.addSpacing(8)
+        self._date_lbl = QLabel(time.strftime("%a, %d %b %Y"))
+        self._date_lbl.setFont(QFont("Segoe UI", 8))
+        self._date_lbl.setStyleSheet("color: #4a8ca4; background: transparent;")
+        left_col.addWidget(self._date_lbl)
+        lay.addLayout(left_col)
+
+        lay.addStretch()
+
+        # ── Center: JARVIS Branding ──
+        mid = QVBoxLayout()
+        mid.setSpacing(2)
+        mid.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        disp_name = "  ".join(list(self._assistant_name.upper()))
+        self._title_lbl = QLabel(disp_name)
+        self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title_lbl.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent; letter-spacing: 4px;")
+        mid.addWidget(self._title_lbl)
+
+        self._sub_lbl = QLabel("AI PERSONAL ASSISTANT")
+        self._sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sub_lbl.setFont(QFont("Segoe UI", 7, QFont.Weight.DemiBold))
+        self._sub_lbl.setStyleSheet("color: #3a8a9a; background: transparent; letter-spacing: 3px;")
+        mid.addWidget(self._sub_lbl)
+        lay.addLayout(mid)
+
+        lay.addStretch()
+
+        # ── Right: Drawer & Window Controls ──
+        right_row = QHBoxLayout()
+        right_row.setSpacing(8)
+
         self._drawer_btn = QPushButton("⚙")
-        self._drawer_btn.setFixedSize(26, 26)
-        self._drawer_btn.setFont(QFont("Courier New", 11))
+        self._drawer_btn.setFixedSize(28, 28)
+        self._drawer_btn.setFont(QFont("Segoe UI", 11))
         self._drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drawer_btn.setToolTip("Settings & Controls")
         self._drawer_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 4px;
+                background: #061826; color: {C.TEXT_MED};
+                border: 1px solid #144066; border-radius: 14px;
             }}
-            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI_DIM}; }}
+            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI}; background: {C.PRI_GHO}; }}
             QPushButton:checked {{ color: {C.PRI}; border-color: {C.PRI}; background: {C.PRI_GHO}; }}
         """)
         self._drawer_btn.setCheckable(True)
         self._drawer_btn.clicked.connect(self._toggle_drawer)
-        lay.addWidget(self._drawer_btn)
-        lay.addStretch()
+        right_row.addWidget(self._drawer_btn)
 
-        mid = QVBoxLayout(); mid.setSpacing(1)
-        _disp = self._assistant_name.upper()
-        self._title_lbl = QLabel(_disp)
-        self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._title_lbl.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
-        self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        mid.addWidget(self._title_lbl)
-        _sub_text = ("A Friendly Assistant"
-                     if _disp in ("JARVIS", "J.A.R.V.I.S")
-                     else "Personal AI Assistant")
-        self._sub_lbl = QLabel(_sub_text)
-        self._sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_lbl.setFont(QFont("Courier New", 7))
-        self._sub_lbl.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
-        mid.addWidget(self._sub_lbl)
-        lay.addLayout(mid)
-        lay.addStretch()
+        min_btn = QPushButton("—")
+        min_btn.setFixedSize(26, 26)
+        min_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        min_btn.setStyleSheet("background: transparent; color: #5ab8cc; border: none;")
+        min_btn.clicked.connect(self.showMinimized)
+        right_row.addWidget(min_btn)
 
-        right_col = QVBoxLayout(); right_col.setSpacing(2)
-        self._clock_lbl = QLabel("00:00:00")
-        self._clock_lbl.setFont(QFont("Courier New", 14, QFont.Weight.Bold))
-        self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        right_col.addWidget(self._clock_lbl)
-        self._date_lbl = QLabel("")
-        self._date_lbl.setFont(QFont("Courier New", 7))
-        self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        right_col.addWidget(self._date_lbl)
-        lay.addLayout(right_col)
+        max_btn = QPushButton("□")
+        max_btn.setFixedSize(26, 26)
+        max_btn.setFont(QFont("Segoe UI", 11))
+        max_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        max_btn.setStyleSheet("background: transparent; color: #5ab8cc; border: none;")
+        max_btn.clicked.connect(self._toggle_max_restore)
+        right_row.addWidget(max_btn)
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(26, 26)
+        close_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #5ab8cc; border: none; }
+            QPushButton:hover { color: #ff3355; }
+        """)
+        close_btn.clicked.connect(self.close)
+        right_row.addWidget(close_btn)
+
+        lay.addLayout(right_row)
         return w
 
+    def _toggle_max_restore(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
     def _tick_clock(self):
-        self._clock_lbl.setText(time.strftime("%H:%M:%S"))
-        self._date_lbl.setText(time.strftime("%a %d %b %Y"))
+        self._clock_lbl.setText(time.strftime("%I:%M %p").lstrip("0"))
+        self._date_lbl.setText(time.strftime("%a, %d %b %Y"))
 
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
@@ -4014,34 +4048,71 @@ class MainWindow(QMainWindow):
         self._quick_drawer.setGeometry(12, 54, _W, self._quick_drawer.sizeHint().height())
 
     def _build_input_row(self) -> QHBoxLayout:
-        row = QHBoxLayout(); row.setSpacing(5)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+
+        pill = QWidget()
+        pill.setFixedHeight(42)
+        pill.setStyleSheet("""
+            QWidget {
+                background: #04101c;
+                border: 1px solid #14446b;
+                border-radius: 21px;
+            }
+        """)
+        pill_lay = QHBoxLayout(pill)
+        pill_lay.setContentsMargins(10, 3, 6, 3)
+        pill_lay.setSpacing(8)
+
+        mic_btn = QPushButton("🎙")
+        mic_btn.setFixedSize(28, 28)
+        mic_btn.setFont(QFont("Segoe UI", 12))
+        mic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        mic_btn.setToolTip("Push-to-Talk or Toggle Mic")
+        mic_btn.setStyleSheet("background: transparent; color: #00d4ff; border: none;")
+        mic_btn.clicked.connect(self._toggle_mute)
+        pill_lay.addWidget(mic_btn)
+
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Type a command or question…")
-        self._input.setFont(QFont("Courier New", 9))
-        self._input.setFixedHeight(30)
-        self._input.setStyleSheet(f"""
-            QLineEdit {{
-                background: #000d14; color: {C.WHITE};
-                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 3px 7px;
-            }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+        self._input.setPlaceholderText("Type a message...")
+        self._input.setFont(QFont("Segoe UI", 10))
+        self._input.setStyleSheet("""
+            QLineEdit {
+                background: transparent;
+                color: #ffffff;
+                border: none;
+                padding: 2px 4px;
+            }
+            QLineEdit::placeholder {
+                color: #4a758c;
+            }
         """)
         self._input.returnPressed.connect(self._send)
-        row.addWidget(self._input)
+        pill_lay.addWidget(self._input, stretch=1)
 
-        send = QPushButton("▸")
+        send = QPushButton("➤")
         send.setFixedSize(30, 30)
-        send.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        send.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         send.setCursor(Qt.CursorShape.PointingHandCursor)
-        send.setStyleSheet(f"""
-            QPushButton {{
-                background: {C.PANEL}; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
-            }}
-            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+        send.setToolTip("Send Message")
+        send.setStyleSheet("""
+            QPushButton {
+                background: #0e3b60;
+                color: #00d4ff;
+                border: 1px solid #1a6498;
+                border-radius: 15px;
+            }
+            QPushButton:hover {
+                background: #145080;
+                color: #ffffff;
+                border-color: #00d4ff;
+            }
         """)
         send.clicked.connect(self._send)
-        row.addWidget(send)
+        pill_lay.addWidget(send)
+
+        row.addWidget(pill)
         return row
 
     def _build_content_panel(self) -> QWidget:
