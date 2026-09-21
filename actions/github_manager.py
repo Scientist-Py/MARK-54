@@ -251,8 +251,8 @@ def search_repos(query: str, max_results: int = 5) -> str:
     return "\n".join(lines)
 
 
-def create_repository(name: str, description: str = "", private: bool = False, auto_init: bool = True, player=None) -> str:
-    """Create a brand new GitHub repository under the authenticated user account."""
+def create_repository(name: str, description: str = "", private: bool = False, auto_init: bool = True, open_in_browser: bool = True, player=None) -> str:
+    """Create a brand new GitHub repository under the authenticated user account and auto-open it."""
     if not name:
         return "Sir, please provide a name for the new repository."
 
@@ -269,30 +269,56 @@ def create_repository(name: str, description: str = "", private: bool = False, a
         html_url = data.get("html_url", "")
         full_name = data.get("full_name", clean_name)
         vis = "Private" if private else "Public"
+        if open_in_browser and html_url:
+            try:
+                webbrowser.open(html_url)
+            except Exception as e:
+                print(f"[GitHub] ⚠️ Browser open error: {e}")
+
         if player and hasattr(player, "show_content"):
-            player.show_content(f"REPO CREATED: {full_name}", f"Name: {full_name}\nVisibility: {vis}\nURL: {html_url}")
-        return f"Sir, successfully created {vis} GitHub repository '{full_name}'. Link: {html_url}"
+            player.show_content(f"REPO CREATED: {full_name}", f"Name: {full_name}\nVisibility: {vis}\nURL: {html_url}\nStatus: Opened in browser")
+        return f"Sir, successfully created {vis} GitHub repository '{full_name}' and opened it in your browser. Link: {html_url}"
     elif status == 422:
         return f"Sir, a repository named '{clean_name}' already exists in your GitHub account."
     return f"Sir, failed to create repository: {data}"
 
 
-def git_commit_and_push(commit_msg: str = "", branch: str = "") -> str:
-    """Stage local changes, commit with message, and push to GitHub."""
+def git_commit_and_push(file_path: str = "", commit_msg: str = "", branch: str = "", repo: str = "", player=None) -> str:
+    """Stage specified file(s) or all changes, commit, push to GitHub, and display update summary."""
     try:
-        # 1. Check if git status has changes
+        # 1. Add specific file or all files
+        if file_path and file_path.strip():
+            target_file = file_path.strip()
+            subprocess.check_call(["git", "add", target_file])
+            item_desc = f"file '{target_file}'"
+        else:
+            subprocess.check_call(["git", "add", "-A"])
+            item_desc = "all modified files"
+
+        # 2. Check if git status has staged changes
         status_out = subprocess.check_output(["git", "status", "--porcelain"], text=True, stderr=subprocess.STDOUT)
         if not status_out.strip():
             return "Sir, working directory is clean. No changes to commit."
 
-        # 2. Stage changes
-        subprocess.check_call(["git", "add", "-A"])
-
         # 3. Commit
-        msg = commit_msg.strip() or "feat: update codebase via JARVIS Developer Assistant"
+        msg = commit_msg.strip() or f"feat: update {item_desc} via JARVIS Developer Assistant"
         subprocess.check_call(["git", "commit", "-m", msg])
 
-        # 4. Push
+        # 4. Determine target remote / repo
+        remote_name = "origin"
+        if repo and repo.strip() and repo.strip() != get_default_repo():
+            custom_repo = repo.strip()
+            # If full URL not provided, build https URL
+            custom_url = custom_repo if custom_repo.startswith("http") else f"https://github.com/{custom_repo}.git"
+            try:
+                # Add or update custom remote
+                subprocess.call(["git", "remote", "remove", "target_repo"], stderr=subprocess.DEVNULL)
+                subprocess.check_call(["git", "remote", "add", "target_repo", custom_url])
+                remote_name = "target_repo"
+            except Exception as e:
+                print(f"[GitHub] ⚠️ Custom remote setup error: {e}")
+
+        # 5. Push
         target_branch = branch.strip()
         if not target_branch:
             try:
@@ -300,8 +326,18 @@ def git_commit_and_push(commit_msg: str = "", branch: str = "") -> str:
             except Exception:
                 target_branch = "main"
 
-        subprocess.check_call(["git", "push", "origin", target_branch])
-        return f"Sir, changes committed with message '{msg}' and pushed successfully to origin/{target_branch}."
+        subprocess.check_call(["git", "push", "-u", remote_name, target_branch])
+        
+        # Get latest commit hash
+        commit_hash = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+        
+        if player and hasattr(player, "show_content"):
+            player.show_content(
+                f"GIT PUSH SUCCESSFUL [{commit_hash}]",
+                f"Item: {item_desc.capitalize()}\nCommit: {msg}\nBranch: {target_branch}\nRemote: {remote_name}\nStatus: Pushed to GitHub"
+            )
+
+        return f"Sir, committed {item_desc} ('{msg}') and pushed successfully to {target_branch} [Commit: {commit_hash}]."
     except subprocess.CalledProcessError as e:
         return f"Sir, git operation encountered an error: {e}"
     except Exception as e:
@@ -326,6 +362,8 @@ def github_manager_action(
     pr_number = parameters.get("pr_number")
     commit_msg = (parameters.get("commit_msg") or parameters.get("message") or "").strip()
     branch = (parameters.get("branch") or "").strip()
+    file_path = (parameters.get("file_path") or parameters.get("file") or "").strip()
+    open_in_browser = bool(parameters.get("open_in_browser", True))
     private = bool(parameters.get("private", False))
 
     if action in ("notifications", "unread", "check_notifications"):
@@ -345,7 +383,7 @@ def github_manager_action(
 
     elif action in ("create_repo", "new_repo", "create_repository"):
         repo_name = title or repo or query
-        return create_repository(name=repo_name, description=body, private=private, player=player)
+        return create_repository(name=repo_name, description=body, private=private, open_in_browser=open_in_browser, player=player)
 
     elif action in ("workflow", "ci", "cicd", "build_status", "actions"):
         return check_workflow_status(repo=repo)
@@ -354,7 +392,7 @@ def github_manager_action(
         return search_repos(query=query or repo)
 
     elif action in ("commit_and_push", "push", "commit"):
-        return git_commit_and_push(commit_msg=commit_msg, branch=branch)
+        return git_commit_and_push(file_path=file_path, commit_msg=commit_msg, branch=branch, repo=repo, player=player)
 
     return f"Sir, unknown GitHub action '{action}'. Supported actions: notifications, list_prs, review_pr, create_issue, create_repo, workflow, search, commit_and_push."
 
@@ -363,9 +401,10 @@ TOOL = {
     "name": "github_manager",
     "description": (
         "THE tool for managing GitHub operations and developer workflows. "
-        "Supports: checking unread notifications, creating new GitHub repositories, listing and reviewing pull requests (with AI code review), "
-        "creating GitHub issues, checking GitHub Actions CI/CD workflow status, searching trending repositories, "
-        "and performing voice-controlled git commit and push."
+        "Supports: checking unread notifications, creating new GitHub repositories (and auto-opening in browser), "
+        "listing and reviewing pull requests (with AI code review), creating GitHub issues, "
+        "checking GitHub Actions CI/CD workflow status, searching trending repositories, "
+        "and performing voice-controlled git commit and push (for specific files or entire projects)."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -391,9 +430,17 @@ TOOL = {
                 "type": "STRING",
                 "description": "Body/description content for issues or new repositories."
             },
+            "file_path": {
+                "type": "STRING",
+                "description": "Specific file or folder path to stage, commit, and push (e.g. 'main.py', 'actions/'). Leave empty to push all modified files."
+            },
             "private": {
                 "type": "BOOLEAN",
                 "description": "Whether a newly created repository should be private. Default is false (public)."
+            },
+            "open_in_browser": {
+                "type": "BOOLEAN",
+                "description": "Whether to automatically open newly created repositories in web browser. Default is true."
             },
             "labels": {
                 "type": "ARRAY",
