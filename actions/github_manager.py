@@ -251,6 +251,32 @@ def search_repos(query: str, max_results: int = 5) -> str:
     return "\n".join(lines)
 
 
+def create_repository(name: str, description: str = "", private: bool = False, auto_init: bool = True, player=None) -> str:
+    """Create a brand new GitHub repository under the authenticated user account."""
+    if not name:
+        return "Sir, please provide a name for the new repository."
+
+    clean_name = name.strip().replace(" ", "-")
+    payload = {
+        "name": clean_name,
+        "description": description or f"Repository {clean_name} created via JARVIS",
+        "private": bool(private),
+        "auto_init": bool(auto_init),
+    }
+
+    status, data = _github_api_request("user/repos", method="POST", payload=payload)
+    if status == 201 and isinstance(data, dict):
+        html_url = data.get("html_url", "")
+        full_name = data.get("full_name", clean_name)
+        vis = "Private" if private else "Public"
+        if player and hasattr(player, "show_content"):
+            player.show_content(f"REPO CREATED: {full_name}", f"Name: {full_name}\nVisibility: {vis}\nURL: {html_url}")
+        return f"Sir, successfully created {vis} GitHub repository '{full_name}'. Link: {html_url}"
+    elif status == 422:
+        return f"Sir, a repository named '{clean_name}' already exists in your GitHub account."
+    return f"Sir, failed to create repository: {data}"
+
+
 def git_commit_and_push(commit_msg: str = "", branch: str = "") -> str:
     """Stage local changes, commit with message, and push to GitHub."""
     try:
@@ -295,11 +321,12 @@ def github_manager_action(
     action = (parameters.get("action") or "notifications").lower().strip()
     repo = (parameters.get("repo") or "").strip()
     query = (parameters.get("query") or "").strip()
-    title = (parameters.get("title") or "").strip()
-    body = (parameters.get("body") or "").strip()
+    title = (parameters.get("title") or parameters.get("name") or "").strip()
+    body = (parameters.get("body") or parameters.get("description") or "").strip()
     pr_number = parameters.get("pr_number")
     commit_msg = (parameters.get("commit_msg") or parameters.get("message") or "").strip()
     branch = (parameters.get("branch") or "").strip()
+    private = bool(parameters.get("private", False))
 
     if action in ("notifications", "unread", "check_notifications"):
         return list_notifications()
@@ -316,6 +343,10 @@ def github_manager_action(
             labels = [l.strip() for l in labels.split(",") if l.strip()]
         return create_issue(title=title, body=body, labels=labels, repo=repo)
 
+    elif action in ("create_repo", "new_repo", "create_repository"):
+        repo_name = title or repo or query
+        return create_repository(name=repo_name, description=body, private=private, player=player)
+
     elif action in ("workflow", "ci", "cicd", "build_status", "actions"):
         return check_workflow_status(repo=repo)
 
@@ -325,14 +356,14 @@ def github_manager_action(
     elif action in ("commit_and_push", "push", "commit"):
         return git_commit_and_push(commit_msg=commit_msg, branch=branch)
 
-    return f"Sir, unknown GitHub action '{action}'. Supported actions: notifications, list_prs, review_pr, create_issue, workflow, search, commit_and_push."
+    return f"Sir, unknown GitHub action '{action}'. Supported actions: notifications, list_prs, review_pr, create_issue, create_repo, workflow, search, commit_and_push."
 
 
 TOOL = {
     "name": "github_manager",
     "description": (
         "THE tool for managing GitHub operations and developer workflows. "
-        "Supports: checking unread notifications, listing and reviewing pull requests (with AI code review), "
+        "Supports: checking unread notifications, creating new GitHub repositories, listing and reviewing pull requests (with AI code review), "
         "creating GitHub issues, checking GitHub Actions CI/CD workflow status, searching trending repositories, "
         "and performing voice-controlled git commit and push."
     ),
@@ -341,7 +372,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "enum": ["notifications", "list_prs", "review_pr", "create_issue", "workflow", "search", "commit_and_push"],
+                "enum": ["notifications", "list_prs", "review_pr", "create_issue", "create_repo", "workflow", "search", "commit_and_push"],
                 "description": "The GitHub action to perform."
             },
             "repo": {
@@ -354,11 +385,15 @@ TOOL = {
             },
             "title": {
                 "type": "STRING",
-                "description": "Title of the issue or pull request."
+                "description": "Title of the issue, pull request, or name of the new repository to create."
             },
             "body": {
                 "type": "STRING",
-                "description": "Body/description content for issues."
+                "description": "Body/description content for issues or new repositories."
+            },
+            "private": {
+                "type": "BOOLEAN",
+                "description": "Whether a newly created repository should be private. Default is false (public)."
             },
             "labels": {
                 "type": "ARRAY",
