@@ -232,7 +232,6 @@ def search_repos(query: str, max_results: int = 5) -> str:
     if not query:
         return "Sir, what topic or repository would you like to search for?"
     
-    encoded = urllib.parse.quote(query) if hasattr(urllib, "parse") else query
     import urllib.parse
     encoded = urllib.parse.quote(query)
     status, data = _github_api_request(f"search/repositories?q={encoded}&sort=stars&order=desc&per_page={max_results}")
