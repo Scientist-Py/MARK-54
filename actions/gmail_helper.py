@@ -221,11 +221,13 @@ def _send_email(service, to: str, subject: str, body: str, confirmed: bool = Fal
         "body": body,
     }
 
-    # 1. Open React Gmail Composer in browser
-    _open_react_composer(draft_data)
-
-    # 2. Also show on HUD Content Panel
-    if player and hasattr(player, "show_content"):
+    # 1. Show email draft in JARVIS Studio Window
+    if player and hasattr(player, "show_studio"):
+        try:
+            player.show_studio(f"EMAIL: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{body}", "email")
+        except Exception:
+            pass
+    elif player and hasattr(player, "show_content"):
         try:
             player.show_content(f"EMAIL DRAFT: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{body}")
         except Exception:

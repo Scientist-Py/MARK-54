@@ -297,17 +297,68 @@ def _build(description, language, output_path, args, timeout, speak=None, player
     if speak: speak(msg)
     return f"{msg}\n\nLast code saved to: {path}"
 
-def _write_action(description, language, output_path, player) -> str:
+def _write_action(description: str, language: str, output_path: str, create_file: bool, player=None) -> str:
     if not description:
         return "Please describe what you want me to write, sir."
-    if player:
+    if player and hasattr(player, "write_log"):
         player.write_log("[Code] Writing code...")
+    lang = language or "python"
+    model = _get_gemini()
+
+    prompt = f"""You are an expert {lang} developer.
+Write clean, working, well-commented {lang} code for the description below.
+
+Rules:
+- Output ONLY the code. No explanation, no markdown, no backticks.
+- Add helpful inline comments.
+- Handle errors and edge cases properly.
+- Use modern best practices.
+
+Description: {description}
+
+Code:"""
+
     try:
-        code, path = _write(description, language, output_path, player)
-        print(f"[Code] ✅ Written: {path}")
-        return f"Code written. Saved to: {path}\n\nPreview:\n{_preview(code)}"
+        response = model.generate_content(prompt)
+        code     = _clean_code(response.text)
     except Exception as e:
         return f"Could not generate code: {e}"
+
+    # CASE A: Explicit File Creation requested ("create a file of this code...")
+    if output_path or create_file:
+        try:
+            path = _resolve_save_path(output_path, lang)
+            _save_file(path, code)
+            print(f"[Code] ✅ File written and saved: {path}")
+
+            # Open file in OS default editor
+            try:
+                import os, subprocess, sys
+                if os.name == "nt":
+                    os.startfile(str(path))
+                else:
+                    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+            except Exception as oe:
+                print(f"[Code] ⚠️ Could not open file: {oe}")
+
+            return f"Sir, I have created the file '{path.name}' and opened it for you in your code editor."
+        except Exception as e:
+            return f"Could not save code file: {e}"
+
+    # CASE B: Viewing Code (No file creation requested) -> Show JARVIS Studio UI Window
+    if player and hasattr(player, "show_studio"):
+        try:
+            title = f"{lang.capitalize()} Script"
+            player.show_studio(title, code, category="code")
+        except Exception as e:
+            print(f"[Code] ⚠️ Failed to show Studio UI: {e}")
+    elif player and hasattr(player, "show_content"):
+        try:
+            player.show_content(f"{lang.upper()} CODE", code)
+        except Exception as e:
+            print(f"[Code] ⚠️ Failed to show content: {e}")
+
+    return f"Sir, I have generated the {lang} code and opened it in your JARVIS Studio viewer.\n\nPreview:\n{_preview(code)}"
 
 
 def _edit_action(file_path, instruction, player) -> str:
@@ -551,13 +602,14 @@ def code_helper(
     code        = p.get("code", "").strip()
     args        = p.get("args", [])
     timeout     = int(p.get("timeout", 30))
+    create_file = bool(p.get("create_file", False))
 
     if action == "auto":
         action = _detect_intent(description, file_path, code)
         print(f"[Code] 🤖 Auto-detected: {action}")
 
     if action == "write":
-        return _write_action(description, language, output_path, player)
+        return _write_action(description, language, output_path, create_file, player)
 
     elif action == "edit":
         return _edit_action(
@@ -588,7 +640,11 @@ def code_helper(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "code_helper",
-    "description": "Writes, edits, explains, runs, or builds code files.",
+    "description": (
+        "Writes, edits, explains, runs, or builds code. Displays generated code in the JARVIS Studio window. "
+        "Set create_file=true ONLY if the user explicitly requested to 'create a file' or 'save code to file' "
+        "so it creates the file and opens it in their default code editor instead."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -604,9 +660,13 @@ TOOL = {
                 "type": "STRING",
                 "description": "Programming language (default: python)"
             },
+            "create_file": {
+                "type": "BOOLEAN",
+                "description": "Set to true ONLY if the user explicitly asked to create a file or save code to a file."
+            },
             "output_path": {
                 "type": "STRING",
-                "description": "Where to save the file"
+                "description": "Where to save the file if creating a file"
             },
             "file_path": {
                 "type": "STRING",
