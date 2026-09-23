@@ -2916,216 +2916,572 @@ class RemoteKeyOverlay(QWidget):
         self.closed.emit()
 
 
+HISTORY_FILE = CONFIG_DIR / "studio_history.json"
+
+
+class StudioHistoryManager:
+    """Manages persistent history for JARVIS Studio notes, code, and documents."""
+    @staticmethod
+    def load() -> list[dict]:
+        try:
+            if HISTORY_FILE.exists():
+                return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[StudioHistory] ⚠️ Load failed: {e}")
+        return []
+
+    @staticmethod
+    def save(items: list[dict]):
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            HISTORY_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[StudioHistory] ⚠️ Save failed: {e}")
+
+    @classmethod
+    def add(cls, title: str, content: str, category: str = "note") -> dict:
+        items = cls.load()
+        import time as _time
+        from datetime import datetime
+        now_str = datetime.now().strftime("%d %b, %Y • %H:%M:%S")
+        item_id = str(int(_time.time() * 1000))
+        new_item = {
+            "id": item_id,
+            "title": title or "Untitled Draft",
+            "content": content or "",
+            "category": (category or "note").lower(),
+            "created_at": now_str,
+            "last_accessed": now_str,
+            "tags": [(category or "note").lower()]
+        }
+        items.insert(0, new_item)
+        cls.save(items)
+        return new_item
+
+    @classmethod
+    def update_accessed(cls, item_id: str):
+        items = cls.load()
+        from datetime import datetime
+        now_str = datetime.now().strftime("%d %b, %Y • %H:%M:%S")
+        for it in items:
+            if it.get("id") == item_id:
+                it["last_accessed"] = now_str
+                break
+        cls.save(items)
+
+    @classmethod
+    def delete(cls, item_id: str):
+        items = cls.load()
+        items = [it for it in items if it.get("id") != item_id]
+        cls.save(items)
+
+
+class NoteCardWidget(QFrame):
+    """Card item matching the light modern iOS/SaaS mockup design."""
+    card_clicked = pyqtSignal(dict)
+    delete_requested = pyqtSignal(dict)
+
+    def __init__(self, item: dict, parent=None):
+        super().__init__(parent)
+        self.item = item
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            NoteCardWidget {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 14px;
+            }
+            NoteCardWidget:hover {
+                border-color: #cbd5e1;
+                background-color: #f8fafc;
+            }
+        """)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(12)
+
+        # Circular Icon Badge
+        category = item.get("category", "note").lower()
+        icon_str, bg_col, text_col = self._get_icon_style(category)
+        
+        self.icon_lbl = QLabel(icon_str)
+        self.icon_lbl.setFixedSize(38, 38)
+        self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_lbl.setFont(QFont("Segoe UI Emoji", 12))
+        self.icon_lbl.setStyleSheet(f"""
+            background-color: {bg_col};
+            color: {text_col};
+            border-radius: 19px;
+        """)
+        layout.addWidget(self.icon_lbl)
+
+        # Text Info
+        info_box = QVBoxLayout()
+        info_box.setSpacing(2)
+
+        self.title_lbl = QLabel(item.get("title", "Untitled"))
+        self.title_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.title_lbl.setStyleSheet("color: #0f172a; background: transparent;")
+        info_box.addWidget(self.title_lbl)
+
+        date_str = item.get("last_accessed") or item.get("created_at") or ""
+        self.date_lbl = QLabel(date_str)
+        self.date_lbl.setFont(QFont("Segoe UI", 9))
+        self.date_lbl.setStyleSheet("color: #64748b; background: transparent;")
+        info_box.addWidget(self.date_lbl)
+
+        layout.addLayout(info_box, 1)
+
+        # Tag Badge
+        badge_text = category.upper()
+        self.tag_lbl = QLabel(badge_text)
+        self.tag_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self.tag_lbl.setStyleSheet("""
+            background-color: #e0e7ff;
+            color: #4338ca;
+            border-radius: 4px;
+            padding: 2px 6px;
+        """)
+        layout.addWidget(self.tag_lbl)
+
+        # Delete Button
+        del_btn = QPushButton("✕")
+        del_btn.setFixedSize(24, 24)
+        del_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        del_btn.setStyleSheet("""
+            QPushButton {
+                color: #94a3b8;
+                background: transparent;
+                border: none;
+                border-radius: 12px;
+            }
+            QPushButton:hover {
+                color: #ef4444;
+                background: #fee2e2;
+            }
+        """)
+        del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        del_btn.clicked.connect(self._on_delete)
+        layout.addWidget(del_btn)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.card_clicked.emit(self.item)
+        super().mousePressEvent(event)
+
+    def _on_delete(self):
+        self.delete_requested.emit(self.item)
+
+    @staticmethod
+    def _get_icon_style(category: str) -> tuple[str, str, str]:
+        c = (category or "").lower()
+        if "code" in c or "py" in c:
+            return "⚡", "#e0e7ff", "#4338ca"
+        elif "poem" in c or "story" in c:
+            return "✨", "#f3e8ff", "#6b21a8"
+        elif "video" in c or "tutorial" in c:
+            return "▶", "#fee2e2", "#ef4444"
+        elif "letter" in c or "draft" in c:
+            return "📁", "#ffedd5", "#c2410c"
+        else:
+            return "🎙", "#dbeafe", "#1e40af"
+
+
 class StudioWindow(QWidget):
     """
-    JARVIS Standalone Code & Document Studio Window.
-    Appears when JARVIS writes code, poems, letters, notes, or essays
-    without saving to a file. Provides dark high-contrast viewing,
-    syntax-like typography, metadata, line count, word count, copy button,
-    and export/save options.
+    JARVIS Studio Window — Light Modern iOS/SaaS Dashboard UI.
+    Matches uploaded user design with Home Page note history list, search, tags,
+    last-accessed timestamps, and detail view with back navigation.
     """
     def __init__(self, parent=None):
         super().__init__(None)  # Independent top-level window
-        self.setWindowTitle("JARVIS Studio — Creative & Code Viewer")
-        self.resize(880, 640)
-        self.setMinimumSize(640, 440)
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {C.BG};
-                color: {C.WHITE};
-                font-family: 'Consolas', 'Fira Code', 'Courier New', monospace;
-            }}
+        self.setWindowTitle("JARVIS Studio — My Notes & Code")
+        self.resize(840, 660)
+        self.setMinimumSize(600, 480)
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #f8fafc;
+                color: #0f172a;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Header container
-        hdr_frame = QFrame()
-        hdr_frame.setStyleSheet(f"""
-            QFrame {{
-                background: {C.PANEL};
-                border: 1px solid {C.BORDER_B};
-                border-radius: 8px;
-                padding: 6px;
-            }}
+        # Stacked Widget for Home Page (0) and Detail View (1)
+        self.stack = QStackedWidget()
+        main_layout.addWidget(self.stack)
+
+        self._active_tag = "all"
+        self._current_item = None
+
+        # Build Page 0: Home History Dashboard
+        self.page_home = QWidget()
+        self._build_home_page()
+        self.stack.addWidget(self.page_home)
+
+        # Build Page 1: Detail Reader & Editor
+        self.page_detail = QWidget()
+        self._build_detail_page()
+        self.stack.addWidget(self.page_detail)
+
+        self.refresh_history_list()
+
+    def _build_home_page(self):
+        lay = QVBoxLayout(self.page_home)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(14)
+
+        # Top Header Bar
+        top_bar = QHBoxLayout()
+        title_lbl = QLabel("My notes")
+        title_lbl.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #0f172a; background: transparent;")
+        top_bar.addWidget(title_lbl)
+        top_bar.addStretch()
+
+        add_btn = QPushButton("+ Add Note")
+        add_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: #ffffff;
+                border: none;
+                border-radius: 18px;
+                padding: 8px 18px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
         """)
-        hdr_lay = QHBoxLayout(hdr_frame)
-        hdr_lay.setContentsMargins(12, 8, 12, 8)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self._create_new_note)
+        top_bar.addWidget(add_btn)
+        lay.addLayout(top_bar)
 
-        # Title and Badge
-        title_box = QVBoxLayout()
-        title_box.setSpacing(4)
+        # Search Bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Search notes, code, documents...")
+        self.search_input.setFont(QFont("Segoe UI", 10))
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 10px 14px;
+            }
+            QLineEdit:focus {
+                border-color: #3b82f6;
+            }
+        """)
+        self.search_input.textChanged.connect(self.refresh_history_list)
+        lay.addWidget(self.search_input)
 
-        top_row = QHBoxLayout()
-        self._badge = QLabel("◈ CODE STUDIO")
-        self._badge.setStyleSheet(f"""
-            background: {C.PRI_GHO};
-            color: {C.PRI};
-            border: 1px solid {C.PRI_DIM};
-            border-radius: 4px;
+        # Filter Tag Bar
+        tag_bar = QHBoxLayout()
+        tag_bar.setSpacing(8)
+        
+        self.tag_buttons = {}
+        tags = [("all", "All tags"), ("code", "Code"), ("poem", "Poem"), ("note", "Note"), ("letter", "Letter")]
+        for tag_id, tag_name in tags:
+            b = QPushButton(tag_name)
+            b.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _, tid=tag_id: self._filter_by_tag(tid))
+            self.tag_buttons[tag_id] = b
+            tag_bar.addWidget(b)
+        tag_bar.addStretch()
+        lay.addLayout(tag_bar)
+        self._update_tag_styles()
+
+        # Scroll Area for Notes List
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        self.cards_container = QWidget()
+        self.cards_container.setStyleSheet("background: transparent;")
+        self.cards_layout = QVBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(10)
+        self.cards_layout.addStretch()
+
+        scroll.setWidget(self.cards_container)
+        lay.addWidget(scroll, 1)
+
+    def _build_detail_page(self):
+        lay = QVBoxLayout(self.page_detail)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(12)
+
+        # Header Navigation Bar
+        nav_bar = QHBoxLayout()
+        back_btn = QPushButton("← Back to Notes")
+        back_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        back_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #3b82f6;
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
+                padding: 6px 16px;
+            }
+            QPushButton:hover {
+                background-color: #eff6ff;
+                border-color: #bfdbfe;
+            }
+        """)
+        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        back_btn.clicked.connect(self._go_home)
+        nav_bar.addWidget(back_btn)
+        nav_bar.addStretch()
+
+        self.detail_tag = QLabel("NOTE")
+        self.detail_tag.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.detail_tag.setStyleSheet("""
+            background-color: #e0e7ff;
+            color: #4338ca;
+            border-radius: 6px;
             padding: 3px 8px;
-            font-size: 11px;
-            font-weight: bold;
-            font-family: 'Consolas', monospace;
         """)
-        self._title_lbl = QLabel("Untitled Document")
-        self._title_lbl.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
-        self._title_lbl.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
-        top_row.addWidget(self._badge)
-        top_row.addWidget(self._title_lbl)
-        top_row.addStretch()
-        title_box.addLayout(top_row)
+        nav_bar.addWidget(self.detail_tag)
+        lay.addLayout(nav_bar)
 
-        self._meta_lbl = QLabel("Lines: 0  |  Words: 0  |  Chars: 0  |  Generated: --:--:--")
-        self._meta_lbl.setFont(QFont("Consolas", 9))
-        self._meta_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        title_box.addWidget(self._meta_lbl)
-
-        hdr_lay.addLayout(title_box)
-        layout.addWidget(hdr_frame)
-
-        # Content Editor Area
-        self._editor = QTextEdit()
-        self._editor.setFont(QFont("Consolas", 10))
-        self._editor.setReadOnly(True)
-        self._editor.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: #010d16;
-                color: {C.TEXT};
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
+        # Document Info Title Header
+        hdr_card = QFrame()
+        hdr_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
                 padding: 12px;
-                selection-background-color: {C.PRI_DIM};
-                selection-color: {C.WHITE};
-                line-height: 1.4;
-            }}
+            }
         """)
-        layout.addWidget(self._editor, 1)
+        hdr_lay = QVBoxLayout(hdr_card)
+        hdr_lay.setSpacing(4)
 
-        # Action Buttons Footer
+        self.detail_title = QLabel("Document Title")
+        self.detail_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        self.detail_title.setStyleSheet("color: #0f172a; background: transparent;")
+        hdr_lay.addWidget(self.detail_title)
+
+        self.detail_meta = QLabel("Last accessed: --")
+        self.detail_meta.setFont(QFont("Segoe UI", 9))
+        self.detail_meta.setStyleSheet("color: #64748b; background: transparent;")
+        hdr_lay.addWidget(self.detail_meta)
+
+        lay.addWidget(hdr_card)
+
+        # Main Text Editor / Viewer
+        self.editor = QTextEdit()
+        self.editor.setFont(QFont("Consolas", 10))
+        self.editor.setStyleSheet("""
+            QTextEdit {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 14px;
+                line-height: 1.5;
+            }
+        """)
+        lay.addWidget(self.editor, 1)
+
+        # Action Toolbar
         btn_bar = QHBoxLayout()
         btn_bar.setSpacing(10)
 
-        btn_style = f"""
-            QPushButton {{
-                background-color: {C.PANEL2};
-                color: {C.TEXT_MED};
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
+        btn_style = """
+            QPushButton {
+                background-color: #ffffff;
+                color: #334155;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
                 padding: 8px 16px;
-                font-family: 'Consolas', monospace;
-                font-weight: bold;
                 font-size: 11px;
-            }}
-            QPushButton:hover {{
-                background-color: {C.PRI_GHO};
-                color: {C.PRI};
-                border-color: {C.PRI};
-            }}
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #f1f5f9;
+                color: #0f172a;
+            }
         """
 
-        self._copy_btn = QPushButton("📋 Copy Content")
-        self._copy_btn.setStyleSheet(btn_style)
-        self._copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._copy_btn.clicked.connect(self._copy_to_clipboard)
-        btn_bar.addWidget(self._copy_btn)
+        self.copy_btn = QPushButton("📋 Copy Content")
+        self.copy_btn.setStyleSheet(btn_style)
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.clicked.connect(self._copy_content)
+        btn_bar.addWidget(self.copy_btn)
 
-        self._save_btn = QPushButton("💾 Save to File...")
-        self._save_btn.setStyleSheet(btn_style)
-        self._save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_btn.clicked.connect(self._save_to_file)
-        btn_bar.addWidget(self._save_btn)
+        self.save_btn = QPushButton("💾 Save to File...")
+        self.save_btn.setStyleSheet(btn_style)
+        self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_btn.clicked.connect(self._save_to_file)
+        btn_bar.addWidget(self.save_btn)
 
-        self._open_btn = QPushButton("⚡ Open in Default App")
-        self._open_btn.setStyleSheet(btn_style)
-        self._open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._open_btn.clicked.connect(self._open_in_external_app)
-        btn_bar.addWidget(self._open_btn)
+        self.open_btn = QPushButton("⚡ Open in External App")
+        self.open_btn.setStyleSheet(btn_style)
+        self.open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_btn.clicked.connect(self._open_in_external_app)
+        btn_bar.addWidget(self.open_btn)
 
         btn_bar.addStretch()
 
-        self._close_btn = QPushButton("✕ Close Studio")
-        self._close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: rgba(255, 51, 85, 0.15);
-                color: {C.RED};
-                border: 1px solid {C.RED};
-                border-radius: 6px;
+        del_btn = QPushButton("🗑 Delete Note")
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #fee2e2;
+                color: #ef4444;
+                border: 1px solid #fca5a5;
+                border-radius: 8px;
                 padding: 8px 16px;
-                font-family: 'Consolas', monospace;
-                font-weight: bold;
                 font-size: 11px;
-            }}
-            QPushButton:hover {{
-                background-color: {C.RED};
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ef4444;
                 color: #ffffff;
-            }}
+            }
         """)
-        self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._close_btn.clicked.connect(self.hide)
-        btn_bar.addWidget(self._close_btn)
+        del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        del_btn.clicked.connect(self._delete_current_item)
+        btn_bar.addWidget(del_btn)
 
-        layout.addLayout(btn_bar)
+        lay.addLayout(btn_bar)
 
-        self._current_title = ""
-        self._current_content = ""
-        self._current_category = "code"
+    def refresh_history_list(self):
+        # Clear existing cards
+        while self.cards_layout.count() > 1:
+            child = self.cards_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
-    def load_content(self, title: str, content: str, category: str = "code"):
-        import time as _time
-        self._current_title = title or "Draft"
-        self._current_content = content or ""
-        self._current_category = (category or "code").upper()
+        items = StudioHistoryManager.load()
+        search_query = self.search_input.text().lower().strip()
 
-        self.setWindowTitle(f"JARVIS Studio — [{self._current_category}] {self._current_title}")
-        self._title_lbl.setText(self._current_title)
-        self._badge.setText(f"◈ {self._current_category}")
+        for item in items:
+            cat = item.get("category", "note").lower()
+            title = item.get("title", "").lower()
+            content = item.get("content", "").lower()
 
-        lines = len(self._current_content.splitlines())
-        words = len(self._current_content.split())
-        chars = len(self._current_content)
-        ts = _time.strftime("%H:%M:%S")
-        self._meta_lbl.setText(f"Lines: {lines}  |  Words: {words}  |  Chars: {chars}  |  Generated: {ts}")
+            # Apply tag filter
+            if self._active_tag != "all" and cat != self._active_tag:
+                continue
 
-        self._editor.setPlainText(self._current_content)
-        self._copy_btn.setText("📋 Copy Content")
+            # Apply search filter
+            if search_query and (search_query not in title and search_query not in content):
+                continue
 
-    def _copy_to_clipboard(self):
-        QApplication.clipboard().setText(self._current_content)
-        self._copy_btn.setText("✔ Copied to Clipboard!")
-        QTimer.singleShot(2000, lambda: self._copy_btn.setText("📋 Copy Content"))
+            card = NoteCardWidget(item)
+            card.card_clicked.connect(self.open_detail_view)
+            card.delete_requested.connect(self._delete_item_from_card)
+            self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
+
+    def load_content(self, title: str, content: str, category: str = "note"):
+        # Save to persistent history if new
+        item = StudioHistoryManager.add(title, content, category)
+        self.open_detail_view(item)
+
+    def open_detail_view(self, item: dict):
+        self._current_item = item
+        StudioHistoryManager.update_accessed(item.get("id", ""))
+
+        self.detail_title.setText(item.get("title", "Untitled"))
+        date_str = item.get("last_accessed") or item.get("created_at") or ""
+        lines = len((item.get("content") or "").splitlines())
+        words = len((item.get("content") or "").split())
+        self.detail_meta.setText(f"Last accessed: {date_str}  •  {lines} lines  •  {words} words")
+        
+        cat = item.get("category", "note").upper()
+        self.detail_tag.setText(cat)
+        self.editor.setPlainText(item.get("content", ""))
+
+        self.stack.setCurrentIndex(1)
+        self.refresh_history_list()
+
+    def _go_home(self):
+        self.stack.setCurrentIndex(0)
+        self.refresh_history_list()
+
+    def _filter_by_tag(self, tag_id: str):
+        self._active_tag = tag_id
+        self._update_tag_styles()
+        self.refresh_history_list()
+
+    def _update_tag_styles(self):
+        for tid, btn in self.tag_buttons.items():
+            if tid == self._active_tag:
+                btn.setStyleSheet("""
+                    background-color: #334155;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 14px;
+                    padding: 5px 14px;
+                """)
+            else:
+                btn.setStyleSheet("""
+                    background-color: #e2e8f0;
+                    color: #475569;
+                    border: none;
+                    border-radius: 14px;
+                    padding: 5px 14px;
+                """)
+
+    def _create_new_note(self):
+        item = StudioHistoryManager.add("New Note", "", "note")
+        self.open_detail_view(item)
+
+    def _copy_content(self):
+        QApplication.clipboard().setText(self.editor.toPlainText())
+        self.copy_btn.setText("✔ Copied!")
+        QTimer.singleShot(2000, lambda: self.copy_btn.setText("📋 Copy Content"))
 
     def _save_to_file(self):
         desktop = str(Path.home() / "Desktop")
-        ext = ".py" if "CODE" in self._current_category else ".txt"
+        title = self._current_item.get("title", "note") if self._current_item else "note"
+        cat = self._current_item.get("category", "txt") if self._current_item else "txt"
+        ext = ".py" if "code" in cat else ".txt"
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save JARVIS Studio Content", desktop, f"Files (*{ext});;All Files (*.*)"
+            self, "Save Note to File", desktop, f"Files (*{ext});;All Files (*.*)"
         )
         if file_path:
             try:
-                Path(file_path).write_text(self._current_content, encoding="utf-8")
-                self._save_btn.setText("✔ Saved!")
-                QTimer.singleShot(2000, lambda: self._save_btn.setText("💾 Save to File..."))
+                Path(file_path).write_text(self.editor.toPlainText(), encoding="utf-8")
+                self.save_btn.setText("✔ Saved!")
+                QTimer.singleShot(2000, lambda: self.save_btn.setText("💾 Save to File..."))
             except Exception as e:
                 print(f"[Studio] ⚠️ Save failed: {e}")
 
     def _open_in_external_app(self):
         import tempfile
-        ext = ".py" if "CODE" in self._current_category else ".txt"
+        cat = self._current_item.get("category", "txt") if self._current_item else "txt"
+        title = self._current_item.get("title", "note") if self._current_item else "note"
+        ext = ".py" if "code" in cat else ".txt"
         temp_dir = Path(tempfile.gettempdir()) / "jarvis_studio"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        safe_title = "".join(c if c.isalnum() else "_" for c in self._current_title)[:30].strip("_") or "studio_draft"
+        safe_title = "".join(c if c.isalnum() else "_" for c in title)[:30].strip("_") or "studio_draft"
         file_path = temp_dir / f"{safe_title}{ext}"
         try:
-            file_path.write_text(self._current_content, encoding="utf-8")
+            file_path.write_text(self.editor.toPlainText(), encoding="utf-8")
             if os.name == "nt":
                 os.startfile(str(file_path))
             else:
                 subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(file_path)])
         except Exception as e:
             print(f"[Studio] ⚠️ Open external app failed: {e}")
+
+    def _delete_current_item(self):
+        if self._current_item:
+            StudioHistoryManager.delete(self._current_item.get("id", ""))
+            self._go_home()
+
+    def _delete_item_from_card(self, item: dict):
+        StudioHistoryManager.delete(item.get("id", ""))
+        self.refresh_history_list()
 
 
 class MainWindow(QMainWindow):

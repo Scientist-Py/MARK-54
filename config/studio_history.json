@@ -1,0 +1,38 @@
+[
+  {
+    "id": "1790137500001",
+    "title": "UX/UI Design Tutorial",
+    "content": "This is a detailed guide on modern UI design principles, layout hierarchy, and micro-interactions for web and mobile applications.",
+    "category": "tutorial",
+    "created_at": "30 Jun, 2026 \u2022 00:04:59",
+    "last_accessed": "23 Sep, 2026 \u2022 09:58:07",
+    "tags": [
+      "tutorial",
+      "design"
+    ]
+  },
+  {
+    "id": "1790137500002",
+    "title": "Digital Marketing Journey",
+    "content": "Audio transcript summary of key marketing strategies, audience funnel optimization, and growth metrics analysis.",
+    "category": "note",
+    "created_at": "12 Jul, 2026 \u2022 00:01:52",
+    "last_accessed": "12 Jul, 2026 \u2022 00:01:52",
+    "tags": [
+      "note",
+      "marketing"
+    ]
+  },
+  {
+    "id": "1790137500003",
+    "title": "Progress in the profession",
+    "content": "Career growth summary and project milestones for MARK LIV personal AI assistant suite.",
+    "category": "draft",
+    "created_at": "12 Jul, 2026 \u2022 00:05:12",
+    "last_accessed": "12 Jul, 2026 \u2022 00:05:12",
+    "tags": [
+      "draft",
+      "career"
+    ]
+  }
+]
