@@ -209,22 +209,44 @@ def _open_react_composer(draft_data: dict) -> None:
         print(f"[GmailComposer] ⚠️ Failed to launch browser: {e}")
 
 
-def _send_email(service, to: str, subject: str, body: str, confirmed: bool = False, player=None) -> str:
+def _send_email(service, to: str, subject: str, body: str, confirmed: bool = False, player=None, speak=None) -> str:
     if not to or not body:
         return "Sir, both a recipient email address and message body are required to send an email."
 
     email_subject = subject or "Message from JARVIS"
 
     def _do_send():
-        return _send_email_direct(service, to, email_subject, body)
+        res = _send_email_direct(service, to, email_subject, body)
+        spk_msg = f"Sir, your email has been sent successfully to {to}."
+        if player and hasattr(player, "speak") and callable(player.speak):
+            try: player.speak(spk_msg)
+            except Exception: pass
+        elif speak and callable(speak):
+            try: speak(spk_msg)
+            except Exception: pass
+        return res
 
     def _do_regen():
         try:
             from core import gemini
-            prompt = f"Rephrase and polish this professional email to {to} on subject '{email_subject}':\n\n{body}\n\nReturn ONLY the improved email body text."
+            prompt = (
+                f"You are an executive assistant drafting a highly professional, well-structured email to {to} regarding '{email_subject}'.\n"
+                f"Expand and polish the following draft into a complete, formal, executive-level email with an appropriate greeting, "
+                f"clear context, structured paragraphs, a professional call to action, and a formal sign-off.\n\n"
+                f"Original draft:\n{body}\n\n"
+                f"Return ONLY the complete professional email text — no markdown formatting, no commentary."
+            )
             resp = gemini.call(prompt)
             if resp and resp.text:
-                return f"To: {to}\nSubject: {email_subject}\n\n" + resp.text.strip()
+                improved_body = resp.text.strip()
+                spk_msg = "Sir, I have regenerated a polished executive email draft for you."
+                if player and hasattr(player, "speak") and callable(player.speak):
+                    try: player.speak(spk_msg)
+                    except Exception: pass
+                elif speak and callable(speak):
+                    try: speak(spk_msg)
+                    except Exception: pass
+                return f"To: {to}\nSubject: {email_subject}\n\n" + improved_body
         except Exception as e:
             print(f"[GmailHelper] ⚠️ Regenerate failed: {e}")
         return f"To: {to}\nSubject: {email_subject}\n\n{body}"
