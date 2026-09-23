@@ -2919,21 +2919,6 @@ class RemoteKeyOverlay(QWidget):
 HISTORY_FILE = CONFIG_DIR / "studio_history.json"
 
 
-def _studio_speak(text: str):
-    """Guaranteed Windows native speech playback in a background thread."""
-    def _run():
-        try:
-            import platform, subprocess
-            if platform.system() == "Windows":
-                clean_text = text.replace('"', '').replace("'", "")
-                ps_cmd = f'Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak("{clean_text}");'
-                subprocess.run(["powershell", "-Command", ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
-        except Exception as e:
-            print(f"[StudioSpeech] ⚠️ Speech output error: {e}")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
 class StudioHistoryManager:
     """Manages persistent history for JARVIS Studio notes, code, and documents."""
     @staticmethod
@@ -3110,8 +3095,9 @@ class StudioWindow(QWidget):
     Matches uploaded user design with Home Page note history list, search, tags,
     last-accessed timestamps, and detail view with back navigation.
     """
-    def __init__(self, parent=None):
+    def __init__(self, main_win=None, parent=None):
         super().__init__(None)  # Independent top-level window
+        self.main_win = main_win
         self.setWindowTitle("JARVIS Studio — My Notes & Code")
         self.resize(840, 660)
         self.setMinimumSize(600, 480)
@@ -3493,6 +3479,13 @@ class StudioWindow(QWidget):
         self.stack.setCurrentIndex(1)
         self.refresh_history_list()
 
+    def send_jarvis_command(self, cmd_text: str):
+        """Sends a text command directly to JARVIS's live session so JARVIS speaks in his real voice."""
+        if hasattr(self, "main_win") and self.main_win and getattr(self.main_win, "on_text_command", None):
+            cb = self.main_win.on_text_command
+            if cb:
+                threading.Thread(target=cb, args=(cmd_text,), daemon=True).start()
+
     def _on_confirm_click(self):
         if self._confirm_cb:
             try:
@@ -3506,12 +3499,12 @@ class StudioWindow(QWidget):
                     font-weight: bold;
                 """)
                 print(f"[Studio] ✔ Confirm action executed: {res}")
-                _studio_speak("Sir, your email has been sent successfully!")
+                self.send_jarvis_command("Sir has clicked Confirm Send in the Studio window. The email has been sent successfully. Please inform Sir out loud in your natural voice.")
             except Exception as e:
                 print(f"[Studio] ⚠️ Confirm callback failed: {e}")
         else:
             self.confirm_btn.setText("✔ Confirmed!")
-            _studio_speak("Action confirmed, Sir.")
+            self.send_jarvis_command("Sir has clicked Confirm in the Studio window. Please acknowledge Sir out loud in your natural voice.")
 
     def _on_regen_click(self):
         if self._regen_cb:
@@ -3522,7 +3515,7 @@ class StudioWindow(QWidget):
                     if self._current_item:
                         self._current_item["content"] = new_text
                         StudioHistoryManager.save(StudioHistoryManager.load())
-                    _studio_speak("Sir, I have regenerated a polished executive draft for you.")
+                    self.send_jarvis_command("Sir has clicked Regenerate Draft in the Studio window. A new polished executive draft has been generated. Please inform Sir out loud in your natural voice.")
             except Exception as e:
                 print(f"[Studio] ⚠️ Regenerate callback failed: {e}")
 
