@@ -28,6 +28,91 @@ from core.google_auth import get_google_credentials
 from core import confirm as confirm_gate
 
 DRAFT_FILE = BASE_DIR / "config" / "active_draft.json"
+EMAIL_MEMORY_FILE = BASE_DIR / "memory" / "email_contacts.json"
+
+
+def _load_email_memory() -> dict[str, str]:
+    try:
+        if EMAIL_MEMORY_FILE.exists():
+            return json.loads(EMAIL_MEMORY_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[GmailMemory] ⚠️ Load failed: {e}")
+    return {}
+
+
+def _save_email_memory(data: dict[str, str]):
+    try:
+        EMAIL_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        EMAIL_MEMORY_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[GmailMemory] ⚠️ Save failed: {e}")
+
+
+def _remember_email_contact(name_or_key: str, email: str):
+    if not name_or_key or not email or "@" not in email:
+        return
+    mem = _load_email_memory()
+    key = name_or_key.strip().lower()
+    mem[key] = email.strip()
+
+    # Also save prefix key from email address if applicable
+    email_user = email.split("@")[0].replace(".", " ").replace("_", " ").replace("-", " ").strip().lower()
+    if email_user and email_user not in mem:
+        mem[email_user] = email.strip()
+
+    _save_email_memory(mem)
+
+
+def _resolve_recipient(to_input: str) -> tuple[str, str]:
+    """
+    Resolves recipient name or input to an email address.
+    1. Direct email address -> remembers and returns it.
+    2. Persistent memory (memory/email_contacts.json).
+    3. Google Contacts search.
+    4. If contact found without email -> returns clear message.
+    """
+    raw = (to_input or "").strip()
+    if not raw:
+        return "", "Sir, please specify a recipient name or email address."
+
+    # Direct email address provided
+    if "@" in raw:
+        prefix = raw.split("@")[0].replace(".", " ").replace("_", " ").strip()
+        _remember_email_contact(prefix, raw)
+        return raw, ""
+
+    key = raw.lower()
+    mem = _load_email_memory()
+
+    # Match in persistent memory
+    for k, v in mem.items():
+        if key == k or key in k or k in key:
+            print(f"[GmailMemory] 🎯 Resolved '{raw}' from persistent memory -> {v}")
+            return v, ""
+
+    # Search Google Contacts
+    try:
+        from actions.google_contacts import search_contacts
+        contacts = search_contacts(raw, max_results=5)
+        if contacts:
+            for c in contacts:
+                c_name = c.get("name", "")
+                emails = c.get("emails", [])
+                if emails:
+                    email = emails[0]
+                    _remember_email_contact(raw, email)
+                    if c_name:
+                        _remember_email_contact(c_name, email)
+                    print(f"[Gmail] 🎯 Resolved '{raw}' from Google Contacts -> {email}")
+                    return email, ""
+            # Contact found in Google Contacts but has no email listed!
+            found_name = contacts[0].get("name") or raw
+            return "", f"Sir, the contact '{found_name}' does not have an email address."
+    except Exception as e:
+        print(f"[Gmail] ⚠️ Google Contacts search error: {e}")
+
+    # No email address found anywhere
+    return "", f"Sir, I could not find an email address for '{raw}'."
 
 
 def _get_gmail_service():
@@ -263,25 +348,29 @@ Instructions:
 
 def _send_email(service, to: str, subject: str, body: str, search_topic: str = "", player=None) -> str:
     if not to:
-        return "Sir, please specify a recipient email address."
+        return "Sir, please specify a recipient name or email address."
+
+    resolved_to, err_msg = _resolve_recipient(to)
+    if err_msg:
+        return err_msg
 
     # Perform topic research & long email synthesis
-    email_subject, email_body = _enrich_email_content(to, subject, body, search_topic=search_topic, player=player)
+    email_subject, email_body = _enrich_email_content(resolved_to, subject, body, search_topic=search_topic, player=player)
 
     # 1. Show sent email in JARVIS Studio Window
     if player and hasattr(player, "show_studio"):
         try:
-            player.show_studio(f"SENT EMAIL: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{email_body}", "email")
+            player.show_studio(f"SENT EMAIL: {email_subject}", f"To: {resolved_to}\nSubject: {email_subject}\n\n{email_body}", "email")
         except Exception:
             pass
     elif player and hasattr(player, "show_content"):
         try:
-            player.show_content(f"SENT EMAIL: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{email_body}")
+            player.show_content(f"SENT EMAIL: {email_subject}", f"To: {resolved_to}\nSubject: {email_subject}\n\n{email_body}")
         except Exception:
             pass
 
     # 2. Send DIRECTLY without asking for confirmation
-    return _send_email_direct(service, to, email_subject, email_body)
+    return _send_email_direct(service, resolved_to, email_subject, email_body)
 
 
 def _send_reply_direct(service, recipient: str, reply_subject: str, body: str, target_thread_id: str = "", orig_msg_id: str = "") -> str:
@@ -339,9 +428,16 @@ def _reply_to_email(
             if match:
                 reply_to_addr = match.group(1)
 
-        recipient = to or reply_to_addr
+        recipient = reply_to_addr
+        if to:
+            res_rec, err_m = _resolve_recipient(to)
+            if err_m:
+                return err_m
+            if res_rec:
+                recipient = res_rec
+
         if not recipient:
-            return "Sir, could not determine recipient address from the original email."
+            return "Sir, could not determine recipient address for the email reply."
 
         reply_subject = subject or orig_subject
         if not reply_subject.lower().startswith("re:"):
