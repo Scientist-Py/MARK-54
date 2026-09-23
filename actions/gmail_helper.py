@@ -63,13 +63,75 @@ def _remember_email_contact(name_or_key: str, email: str):
     _save_email_memory(mem)
 
 
+PENDING_CHOICES_FILE = BASE_DIR / "memory" / "pending_contact_choices.json"
+
+
+def _load_pending_choices() -> list[dict]:
+    try:
+        if PENDING_CHOICES_FILE.exists():
+            return json.loads(PENDING_CHOICES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+def _save_pending_choices(choices: list[dict]):
+    try:
+        PENDING_CHOICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PENDING_CHOICES_FILE.write_text(json.dumps(choices, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[GmailMemory] ⚠️ Save pending choices failed: {e}")
+
+
+def _clear_pending_choices():
+    try:
+        if PENDING_CHOICES_FILE.exists():
+            PENDING_CHOICES_FILE.unlink()
+    except Exception:
+        pass
+
+
+def _resolve_numeric_choice(to_input: str) -> dict | None:
+    raw = to_input.strip().lower()
+    choices = _load_pending_choices()
+    if not choices:
+        return None
+
+    idx = None
+    if raw.isdigit():
+        val = int(raw)
+        if 1 <= val <= len(choices):
+            idx = val - 1
+    else:
+        num_map = {
+            "first": 0, "1st": 0, "one": 0, "option 1": 0, "number 1": 0,
+            "second": 1, "2nd": 1, "two": 1, "option 2": 1, "number 2": 1,
+            "third": 2, "3rd": 2, "three": 2, "option 3": 2, "number 3": 2,
+            "fourth": 3, "4th": 3, "four": 3, "option 4": 3, "number 4": 3,
+            "fifth": 4, "5th": 4, "five": 4, "option 5": 4, "number 5": 4,
+        }
+        for k, v in num_map.items():
+            if k in raw and v < len(choices):
+                idx = v
+                break
+
+    if idx is not None and 0 <= idx < len(choices):
+        selected = choices[idx]
+        _clear_pending_choices()
+        return selected
+    return None
+
+
 def _resolve_recipient(to_input: str) -> tuple[str, str]:
     """
     Resolves recipient name or input to an email address.
     1. Direct email address -> remembers and returns it.
-    2. Persistent memory (memory/email_contacts.json).
-    3. Google Contacts search.
-    4. If contact found without email -> returns clear message.
+    2. Check numeric choice selection (1, 2, 3...) from pending choices.
+    3. Persistent memory (memory/email_contacts.json).
+    4. Google Contacts search:
+       - 1 contact with email -> returns email directly.
+       - 2+ contacts with email -> shows numbered list (1, 2, 3) and asks user.
+       - Contact found without email -> returns clear warning.
     """
     raw = (to_input or "").strip()
     if not raw:
@@ -80,6 +142,17 @@ def _resolve_recipient(to_input: str) -> tuple[str, str]:
         prefix = raw.split("@")[0].replace(".", " ").replace("_", " ").strip()
         _remember_email_contact(prefix, raw)
         return raw, ""
+
+    # Check pending numeric choice selection (e.g. user answered "1" or "option 2")
+    num_choice = _resolve_numeric_choice(raw)
+    if num_choice:
+        c_name = num_choice.get("name", raw)
+        c_email = num_choice.get("email", "")
+        if c_email:
+            _remember_email_contact(c_name, c_email)
+            _remember_email_contact(raw, c_email)
+            print(f"[Gmail] 🎯 Resolved selection option '{raw}' -> {c_name} ({c_email})")
+            return c_email, ""
 
     key = raw.lower()
     mem = _load_email_memory()
@@ -93,21 +166,43 @@ def _resolve_recipient(to_input: str) -> tuple[str, str]:
     # Search Google Contacts
     try:
         from actions.google_contacts import search_contacts
-        contacts = search_contacts(raw, max_results=5)
+        contacts = search_contacts(raw, max_results=10)
+        contacts_with_emails = []
+
         if contacts:
             for c in contacts:
-                c_name = c.get("name", "")
+                c_name = c.get("name") or "Contact"
                 emails = c.get("emails", [])
-                if emails:
-                    email = emails[0]
-                    _remember_email_contact(raw, email)
-                    if c_name:
-                        _remember_email_contact(c_name, email)
-                    print(f"[Gmail] 🎯 Resolved '{raw}' from Google Contacts -> {email}")
-                    return email, ""
-            # Contact found in Google Contacts but has no email listed!
-            found_name = contacts[0].get("name") or raw
-            return "", f"Sir, the contact '{found_name}' does not have an email address."
+                for em in emails:
+                    if em and "@" in em and {"name": c_name, "email": em} not in contacts_with_emails:
+                        contacts_with_emails.append({"name": c_name, "email": em})
+
+            # CASE 1: Exactly 1 contact found with email
+            if len(contacts_with_emails) == 1:
+                item = contacts_with_emails[0]
+                _remember_email_contact(raw, item["email"])
+                _remember_email_contact(item["name"], item["email"])
+                print(f"[Gmail] 🎯 Resolved '{raw}' from Google Contacts -> {item['email']}")
+                return item["email"], ""
+
+            # CASE 2: Multiple matching contacts found with email -> Disambiguate with numbered list!
+            elif len(contacts_with_emails) > 1:
+                _save_pending_choices(contacts_with_emails)
+                lines = []
+                for idx, c in enumerate(contacts_with_emails, 1):
+                    lines.append(f"{idx}. {c['name']} ({c['email']})")
+
+                prompt_msg = (
+                    f"Sir, I found multiple contacts matching '{raw}':\n"
+                    + "\n".join(lines)
+                    + "\n\nWhich one would you like to send to, Sir? (Please specify 1, 2, or 3)"
+                )
+                return "", prompt_msg
+
+            # CASE 3: Contacts found but none have an email listed
+            else:
+                found_name = contacts[0].get("name") or raw
+                return "", f"Sir, the contact '{found_name}' does not have an email address."
     except Exception as e:
         print(f"[Gmail] ⚠️ Google Contacts search error: {e}")
 
