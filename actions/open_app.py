@@ -101,17 +101,11 @@ def _launch_windows(app_name: str) -> bool:
             pass
 
     try:
-        import pyautogui
-        pyautogui.PAUSE = 0.1
-        pyautogui.press("win")
-        time.sleep(0.7)
-        pyautogui.write(app_name, interval=0.05)
-        time.sleep(0.9)
-        pyautogui.press("enter")
-        time.sleep(2.5)
+        subprocess.Popen(f'start "" "{app_name}"', shell=True)
+        time.sleep(1.0)
         return True
     except Exception as e:
-        print(f"[open_app] Start Menu search failed: {e}")
+        print(f"[open_app] Launch via shell failed: {e}")
 
     return False
 
@@ -247,6 +241,12 @@ def open_app(
 
     if not app_name:
         return "No application name provided."
+
+    if "studio" in app_name.lower():
+        if player and hasattr(player, "show_studio"):
+            player.show_studio("My Studio Workspace", "", "note")
+            return "Opened JARVIS Studio window."
+        return "JARVIS Studio is an internal workspace window."
 
     launcher = _OS_LAUNCHERS.get(_SYSTEM)
     if launcher is None:

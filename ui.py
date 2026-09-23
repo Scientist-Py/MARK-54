@@ -2919,6 +2919,21 @@ class RemoteKeyOverlay(QWidget):
 HISTORY_FILE = CONFIG_DIR / "studio_history.json"
 
 
+def _studio_speak(text: str):
+    """Guaranteed Windows native speech playback in a background thread."""
+    def _run():
+        try:
+            import platform, subprocess
+            if platform.system() == "Windows":
+                clean_text = text.replace('"', '').replace("'", "")
+                ps_cmd = f'Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak("{clean_text}");'
+                subprocess.run(["powershell", "-Command", ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
+        except Exception as e:
+            print(f"[StudioSpeech] ⚠️ Speech output error: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 class StudioHistoryManager:
     """Manages persistent history for JARVIS Studio notes, code, and documents."""
     @staticmethod
@@ -3491,10 +3506,12 @@ class StudioWindow(QWidget):
                     font-weight: bold;
                 """)
                 print(f"[Studio] ✔ Confirm action executed: {res}")
+                _studio_speak("Sir, your email has been sent successfully!")
             except Exception as e:
                 print(f"[Studio] ⚠️ Confirm callback failed: {e}")
         else:
             self.confirm_btn.setText("✔ Confirmed!")
+            _studio_speak("Action confirmed, Sir.")
 
     def _on_regen_click(self):
         if self._regen_cb:
@@ -3505,6 +3522,7 @@ class StudioWindow(QWidget):
                     if self._current_item:
                         self._current_item["content"] = new_text
                         StudioHistoryManager.save(StudioHistoryManager.load())
+                    _studio_speak("Sir, I have regenerated a polished executive draft for you.")
             except Exception as e:
                 print(f"[Studio] ⚠️ Regenerate callback failed: {e}")
 
