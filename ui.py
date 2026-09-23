@@ -3095,9 +3095,8 @@ class StudioWindow(QWidget):
     Matches uploaded user design with Home Page note history list, search, tags,
     last-accessed timestamps, and detail view with back navigation.
     """
-    def __init__(self, main_win=None, parent=None):
+    def __init__(self, parent=None):
         super().__init__(None)  # Independent top-level window
-        self.main_win = main_win
         self.setWindowTitle("JARVIS Studio — My Notes & Code")
         self.resize(840, 660)
         self.setMinimumSize(600, 480)
@@ -3312,46 +3311,6 @@ class StudioWindow(QWidget):
             }
         """
 
-        self.confirm_btn = QPushButton("✔ Confirm & Send Email")
-        self.confirm_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #10b981;
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-        """)
-        self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.confirm_btn.clicked.connect(self._on_confirm_click)
-        self.confirm_btn.hide()
-        btn_bar.addWidget(self.confirm_btn)
-
-        self.regen_btn = QPushButton("🔄 Regenerate Draft")
-        self.regen_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f59e0b;
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #d97706;
-            }
-        """)
-        self.regen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.regen_btn.clicked.connect(self._on_regen_click)
-        self.regen_btn.hide()
-        btn_bar.addWidget(self.regen_btn)
-
         self.copy_btn = QPushButton("📋 Copy Content")
         self.copy_btn.setStyleSheet(btn_style)
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3394,9 +3353,6 @@ class StudioWindow(QWidget):
 
         lay.addLayout(btn_bar)
 
-        self._confirm_cb = None
-        self._regen_cb = None
-
     def refresh_history_list(self):
         # Clear existing cards
         while self.cards_layout.count() > 1:
@@ -3425,20 +3381,13 @@ class StudioWindow(QWidget):
             card.delete_requested.connect(self._delete_item_from_card)
             self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
 
-    def load_content(self, title: str, content: str, category: str = "note", confirm_cb=None, regen_cb=None):
-        self._confirm_cb = confirm_cb
-        self._regen_cb = regen_cb
+    def load_content(self, title: str, content: str, category: str = "note"):
         # Save to persistent history if new
         item = StudioHistoryManager.add(title, content, category)
-        self.open_detail_view(item, confirm_cb, regen_cb)
+        self.open_detail_view(item)
 
-    def open_detail_view(self, item: dict, confirm_cb=None, regen_cb=None):
+    def open_detail_view(self, item: dict):
         self._current_item = item
-        if confirm_cb is not None:
-            self._confirm_cb = confirm_cb
-        if regen_cb is not None:
-            self._regen_cb = regen_cb
-
         StudioHistoryManager.update_accessed(item.get("id", ""))
 
         self.detail_title.setText(item.get("title", "Untitled"))
@@ -3446,78 +3395,13 @@ class StudioWindow(QWidget):
         lines = len((item.get("content") or "").splitlines())
         words = len((item.get("content") or "").split())
         self.detail_meta.setText(f"Last accessed: {date_str}  •  {lines} lines  •  {words} words")
-
-        cat = item.get("category", "note").lower()
-        self.detail_tag.setText(cat.upper())
+        
+        cat = item.get("category", "note").upper()
+        self.detail_tag.setText(cat)
         self.editor.setPlainText(item.get("content", ""))
-
-        if cat == "email" or self._confirm_cb is not None:
-            self.confirm_btn.show()
-            self.confirm_btn.setText("✔ Confirm & Send Email")
-            self.confirm_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #10b981;
-                    color: #ffffff;
-                    border: none;
-                    border-radius: 8px;
-                    padding: 8px 16px;
-                    font-size: 11px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #059669;
-                }
-            """)
-        else:
-            self.confirm_btn.hide()
-
-        if cat == "email" or self._regen_cb is not None:
-            self.regen_btn.show()
-        else:
-            self.regen_btn.hide()
 
         self.stack.setCurrentIndex(1)
         self.refresh_history_list()
-
-    def send_jarvis_command(self, cmd_text: str):
-        """Sends a text command directly to JARVIS's live session so JARVIS speaks in his real voice."""
-        if hasattr(self, "main_win") and self.main_win and getattr(self.main_win, "on_text_command", None):
-            cb = self.main_win.on_text_command
-            if cb:
-                threading.Thread(target=cb, args=(cmd_text,), daemon=True).start()
-
-    def _on_confirm_click(self):
-        if self._confirm_cb:
-            try:
-                res = self._confirm_cb()
-                self.confirm_btn.setText("✔ Email Sent Successfully!")
-                self.confirm_btn.setStyleSheet("""
-                    background-color: #059669;
-                    color: #ffffff;
-                    border-radius: 8px;
-                    padding: 8px 16px;
-                    font-weight: bold;
-                """)
-                print(f"[Studio] ✔ Confirm action executed: {res}")
-                self.send_jarvis_command("Sir has clicked Confirm Send in the Studio window. The email has been sent successfully. Please inform Sir out loud in your natural voice.")
-            except Exception as e:
-                print(f"[Studio] ⚠️ Confirm callback failed: {e}")
-        else:
-            self.confirm_btn.setText("✔ Confirmed!")
-            self.send_jarvis_command("Sir has clicked Confirm in the Studio window. Please acknowledge Sir out loud in your natural voice.")
-
-    def _on_regen_click(self):
-        if self._regen_cb:
-            try:
-                new_text = self._regen_cb()
-                if new_text:
-                    self.editor.setPlainText(new_text)
-                    if self._current_item:
-                        self._current_item["content"] = new_text
-                        StudioHistoryManager.save(StudioHistoryManager.load())
-                    self.send_jarvis_command("Sir has clicked Regenerate Draft in the Studio window. A new polished executive draft has been generated. Please inform Sir out loud in your natural voice.")
-            except Exception as e:
-                print(f"[Studio] ⚠️ Regenerate callback failed: {e}")
 
     def _go_home(self):
         self.stack.setCurrentIndex(0)
@@ -3604,7 +3488,7 @@ class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
-    _studio_sig     = pyqtSignal(str, str, str, object, object) # (title, text, category, confirm_cb, regen_cb)
+    _studio_sig     = pyqtSignal(str, str, str) # (title, text, category) — thread-safe studio window
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
@@ -3660,22 +3544,21 @@ class MainWindow(QMainWindow):
         self._customize_overlay: CustomizeOverlay | None = None
 
         central = QWidget()
-        central.setStyleSheet(f"background: {C.BG};")
+        central.setStyleSheet("background: #000000;")
         self.setCentralWidget(central)
 
-        root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._build_header())
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-
+        # Build sub-panels so underlying attributes (_header_widget, _left_panel, _right_panel, _log, _input) exist
+        self._header_widget = self._build_header()
+        self._header_widget.hide()
         self._left_panel = self._build_left_panel()
-        body.addWidget(self._left_panel, stretch=0)
+        self._left_panel.hide()
+        self._right_panel = self._build_right_panel()
+        self._right_panel.hide()
 
-        # Center column: HUD + resizable content panel via QSplitter
         self.hud = HudCanvas(face_path, _display)
         self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._content_panel = self._build_content_panel()
@@ -3683,7 +3566,7 @@ class MainWindow(QMainWindow):
 
         # Live camera container — replaces HUD when camera stream is active
         _cam_cont = QWidget()
-        _cam_cont.setStyleSheet("background: #000308;")
+        _cam_cont.setStyleSheet("background: #000000;")
         _cam_v = QVBoxLayout(_cam_cont)
         _cam_v.setContentsMargins(0, 0, 0, 0)
         _cam_v.setSpacing(0)
@@ -3720,29 +3603,200 @@ class MainWindow(QMainWindow):
         self._hud_cam_stack.addWidget(self.hud)
         self._hud_cam_stack.addWidget(_cam_cont)
 
+        # ---------------------------------------------------------------------
+        # Dual-View Stacked Layout (Page 0: Minimal Idle View, Page 1: Chat View)
+        # ---------------------------------------------------------------------
+        self.main_stack = QStackedWidget()
+        self.main_stack.setStyleSheet("background: #000000;")
+        main_layout.addWidget(self.main_stack)
+
+        # ── PAGE 0: MINIMAL IDLE VIEW (Left Mockup Screen) ────────────────────
+        page_idle = QWidget()
+        page_idle.setStyleSheet("background: #000000;")
+        idle_lay = QVBoxLayout(page_idle)
+        idle_lay.setContentsMargins(16, 16, 16, 16)
+        idle_lay.setSpacing(0)
+
+        # Top Bar (💬 Chat Button & ⚙ Settings Gear)
+        idle_top_bar = QHBoxLayout()
+        chat_mode_btn = QPushButton("💬")
+        chat_mode_btn.setFixedSize(44, 44)
+        chat_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        chat_mode_btn.setStyleSheet("""
+            QPushButton {
+                background: #111827; color: #00d4ff;
+                border: 1px solid #1f2937; border-radius: 22px;
+                font-size: 18px;
+            }
+            QPushButton:hover {
+                background: #1f2937; border-color: #00d4ff;
+            }
+        """)
+        chat_mode_btn.clicked.connect(lambda: self.main_stack.setCurrentIndex(1))
+        idle_top_bar.addWidget(chat_mode_btn)
+
+        idle_top_bar.addStretch()
+
+        settings_btn_1 = QPushButton("⚙")
+        settings_btn_1.setFixedSize(44, 44)
+        settings_btn_1.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_btn_1.setStyleSheet("""
+            QPushButton {
+                background: #111827; color: #6b7280;
+                border: 1px solid #1f2937; border-radius: 22px;
+                font-size: 20px;
+            }
+            QPushButton:hover {
+                color: #00d4ff; border-color: #00d4ff;
+            }
+        """)
+        settings_btn_1.setCheckable(True)
+        settings_btn_1.clicked.connect(self._toggle_drawer)
+        idle_top_bar.addWidget(settings_btn_1)
+
+        idle_lay.addLayout(idle_top_bar)
+
+        # Central Orb Container
+        self._idle_orb_container = QWidget()
+        self._idle_orb_lay = QVBoxLayout(self._idle_orb_container)
+        self._idle_orb_lay.setContentsMargins(0, 0, 0, 0)
+        self._idle_orb_lay.addWidget(self._hud_cam_stack)
+        idle_lay.addWidget(self._idle_orb_container, stretch=1)
+
+        self.main_stack.addWidget(page_idle)
+
+        # ── PAGE 1: INTERACTIVE CHAT SCREEN (Right Mockup Screen) ────────────
+        page_chat = QWidget()
+        page_chat.setStyleSheet("background: #000000;")
+        chat_lay = QVBoxLayout(page_chat)
+        chat_lay.setContentsMargins(16, 16, 16, 16)
+        chat_lay.setSpacing(12)
+
+        # Top Bar (← Back Button & ⚙ Settings Gear)
+        chat_top_bar = QHBoxLayout()
+        back_to_idle_btn = QPushButton("←")
+        back_to_idle_btn.setFixedSize(44, 44)
+        back_to_idle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        back_to_idle_btn.setStyleSheet("""
+            QPushButton {
+                background: #111827; color: #ffffff;
+                border: 1px solid #1f2937; border-radius: 22px;
+                font-size: 20px; font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #1f2937; color: #00d4ff; border-color: #00d4ff;
+            }
+        """)
+        back_to_idle_btn.clicked.connect(lambda: self.main_stack.setCurrentIndex(0))
+        chat_top_bar.addWidget(back_to_idle_btn)
+
+        chat_top_bar.addStretch()
+
+        settings_btn_2 = QPushButton("⚙")
+        settings_btn_2.setFixedSize(44, 44)
+        settings_btn_2.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_btn_2.setStyleSheet("""
+            QPushButton {
+                background: #111827; color: #6b7280;
+                border: 1px solid #1f2937; border-radius: 22px;
+                font-size: 20px;
+            }
+            QPushButton:hover {
+                color: #00d4ff; border-color: #00d4ff;
+            }
+        """)
+        settings_btn_2.setCheckable(True)
+        settings_btn_2.clicked.connect(self._toggle_drawer)
+        chat_top_bar.addWidget(settings_btn_2)
+
+        chat_lay.addLayout(chat_top_bar)
+
+        # Center Chat Layout (Orb + Log + Splitter Content)
+        self._chat_center_container = QWidget()
+        self._chat_center_lay = QVBoxLayout(self._chat_center_container)
+        self._chat_center_lay.setContentsMargins(0, 0, 0, 0)
+        self._chat_center_lay.setSpacing(8)
+
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
             QSplitter::handle {{
                 background: {C.BORDER};
-                height: 4px;
+                height: 2px;
             }}
             QSplitter::handle:hover {{
                 background: {C.PRI_DIM};
             }}
         """)
-        self._center_split.addWidget(self._hud_cam_stack)
+        self._center_split.addWidget(self._log)
         self._center_split.addWidget(self._content_panel)
         self._center_split.addWidget(self._quiz_panel)
         self._center_split.setStretchFactor(0, 3)
         self._center_split.setStretchFactor(1, 1)
-        self._center_split.setCollapsible(0, False)
-        body.addWidget(self._center_split, stretch=5)
 
-        self._right_panel = self._build_right_panel()
-        body.addWidget(self._right_panel, stretch=0)
+        self._chat_center_lay.addWidget(self._center_split, stretch=1)
+        chat_lay.addWidget(self._chat_center_container, stretch=1)
 
-        root.addLayout(body, stretch=1)
-        root.addWidget(self._build_footer())
+        # Bottom Pill Bar Container (🎙 Type or speak... ➔)
+        pill_bar = QFrame()
+        pill_bar.setFixedHeight(54)
+        pill_bar.setStyleSheet("""
+            QFrame {
+                background-color: #0b0f19;
+                border: 1.5px solid #00d4ff;
+                border-radius: 27px;
+            }
+        """)
+        pill_lay = QHBoxLayout(pill_bar)
+        pill_lay.setContentsMargins(12, 0, 12, 0)
+        pill_lay.setSpacing(10)
+
+        mic_btn = QPushButton("🎙")
+        mic_btn.setFixedSize(36, 36)
+        mic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        mic_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #00d4ff;
+                border: none; font-size: 18px;
+            }
+            QPushButton:hover { color: #ffffff; }
+        """)
+        mic_btn.clicked.connect(self._toggle_mute)
+        pill_lay.addWidget(mic_btn)
+
+        pill_lay.addWidget(self._input, stretch=1)
+        self._input.setStyleSheet("""
+            QLineEdit {
+                background: transparent; color: #ffffff;
+                border: none; font-size: 14px; font-family: "Segoe UI", sans-serif;
+            }
+        """)
+        self._input.setPlaceholderText("Type or speak...")
+
+        send_btn = QPushButton("➔")
+        send_btn.setFixedSize(36, 36)
+        send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        send_btn.setStyleSheet("""
+            QPushButton {
+                background: #00d4ff; color: #000000;
+                border: none; border-radius: 18px;
+                font-size: 16px; font-weight: bold;
+            }
+            QPushButton:hover { background: #33e0ff; }
+        """)
+        send_btn.clicked.connect(self._send)
+        pill_lay.addWidget(send_btn)
+
+        chat_lay.addWidget(pill_bar)
+
+        self.main_stack.addWidget(page_chat)
+
+        # Sync orb placement when switching views
+        def _on_page_switch(idx: int):
+            if idx == 0:
+                self._idle_orb_lay.addWidget(self._hud_cam_stack)
+            else:
+                self._chat_center_lay.insertWidget(0, self._hud_cam_stack, stretch=1)
+        self.main_stack.currentChanged.connect(_on_page_switch)
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -4839,11 +4893,11 @@ class MainWindow(QMainWindow):
             total = self._center_split.height()
             self._center_split.setSizes([max(total - 220, 120), 220])
 
-    def _show_studio(self, title: str, text: str, category: str = "code", confirm_cb=None, regen_cb=None):
+    def _show_studio(self, title: str, text: str, category: str = "code"):
         """Slot — runs on Qt main thread. Pops up the JARVIS Standalone Studio Window."""
         if self._studio_win is None:
             self._studio_win = StudioWindow()
-        self._studio_win.load_content(title, text, category, confirm_cb, regen_cb)
+        self._studio_win.load_content(title, text, category)
         self._studio_win.show()
         self._studio_win.raise_()
         self._studio_win.activateWindow()
@@ -6078,9 +6132,9 @@ class JarvisUI:
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
 
-    def show_studio(self, title: str, text: str, category: str = "code", confirm_cb=None, regen_cb=None):
+    def show_studio(self, title: str, text: str, category: str = "code"):
         """Thread-safe: display content in the standalone JARVIS Studio window."""
-        self._win._studio_sig.emit(str(title or "Draft"), str(text or ""), str(category or "code"), confirm_cb, regen_cb)
+        self._win._studio_sig.emit(str(title or "Draft"), str(text or ""), str(category or "code"))
 
     def show_quiz(self, topic: str, questions, grade=None) -> None:
         """Thread-safe: put an interactive quiz on the board.
