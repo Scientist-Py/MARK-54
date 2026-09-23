@@ -3311,6 +3311,46 @@ class StudioWindow(QWidget):
             }
         """
 
+        self.confirm_btn = QPushButton("✔ Confirm & Send Email")
+        self.confirm_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #10b981;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+        """)
+        self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.confirm_btn.clicked.connect(self._on_confirm_click)
+        self.confirm_btn.hide()
+        btn_bar.addWidget(self.confirm_btn)
+
+        self.regen_btn = QPushButton("🔄 Regenerate Draft")
+        self.regen_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f59e0b;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #d97706;
+            }
+        """)
+        self.regen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.regen_btn.clicked.connect(self._on_regen_click)
+        self.regen_btn.hide()
+        btn_bar.addWidget(self.regen_btn)
+
         self.copy_btn = QPushButton("📋 Copy Content")
         self.copy_btn.setStyleSheet(btn_style)
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3353,6 +3393,9 @@ class StudioWindow(QWidget):
 
         lay.addLayout(btn_bar)
 
+        self._confirm_cb = None
+        self._regen_cb = None
+
     def refresh_history_list(self):
         # Clear existing cards
         while self.cards_layout.count() > 1:
@@ -3381,13 +3424,20 @@ class StudioWindow(QWidget):
             card.delete_requested.connect(self._delete_item_from_card)
             self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
 
-    def load_content(self, title: str, content: str, category: str = "note"):
+    def load_content(self, title: str, content: str, category: str = "note", confirm_cb=None, regen_cb=None):
+        self._confirm_cb = confirm_cb
+        self._regen_cb = regen_cb
         # Save to persistent history if new
         item = StudioHistoryManager.add(title, content, category)
-        self.open_detail_view(item)
+        self.open_detail_view(item, confirm_cb, regen_cb)
 
-    def open_detail_view(self, item: dict):
+    def open_detail_view(self, item: dict, confirm_cb=None, regen_cb=None):
         self._current_item = item
+        if confirm_cb is not None:
+            self._confirm_cb = confirm_cb
+        if regen_cb is not None:
+            self._regen_cb = regen_cb
+
         StudioHistoryManager.update_accessed(item.get("id", ""))
 
         self.detail_title.setText(item.get("title", "Untitled"))
@@ -3395,13 +3445,68 @@ class StudioWindow(QWidget):
         lines = len((item.get("content") or "").splitlines())
         words = len((item.get("content") or "").split())
         self.detail_meta.setText(f"Last accessed: {date_str}  •  {lines} lines  •  {words} words")
-        
-        cat = item.get("category", "note").upper()
-        self.detail_tag.setText(cat)
+
+        cat = item.get("category", "note").lower()
+        self.detail_tag.setText(cat.upper())
         self.editor.setPlainText(item.get("content", ""))
+
+        if cat == "email" or self._confirm_cb is not None:
+            self.confirm_btn.show()
+            self.confirm_btn.setText("✔ Confirm & Send Email")
+            self.confirm_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
+        else:
+            self.confirm_btn.hide()
+
+        if cat == "email" or self._regen_cb is not None:
+            self.regen_btn.show()
+        else:
+            self.regen_btn.hide()
 
         self.stack.setCurrentIndex(1)
         self.refresh_history_list()
+
+    def _on_confirm_click(self):
+        if self._confirm_cb:
+            try:
+                res = self._confirm_cb()
+                self.confirm_btn.setText("✔ Email Sent Successfully!")
+                self.confirm_btn.setStyleSheet("""
+                    background-color: #059669;
+                    color: #ffffff;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                """)
+                print(f"[Studio] ✔ Confirm action executed: {res}")
+            except Exception as e:
+                print(f"[Studio] ⚠️ Confirm callback failed: {e}")
+        else:
+            self.confirm_btn.setText("✔ Confirmed!")
+
+    def _on_regen_click(self):
+        if self._regen_cb:
+            try:
+                new_text = self._regen_cb()
+                if new_text:
+                    self.editor.setPlainText(new_text)
+                    if self._current_item:
+                        self._current_item["content"] = new_text
+                        StudioHistoryManager.save(StudioHistoryManager.load())
+            except Exception as e:
+                print(f"[Studio] ⚠️ Regenerate callback failed: {e}")
 
     def _go_home(self):
         self.stack.setCurrentIndex(0)
@@ -3488,7 +3593,7 @@ class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
-    _studio_sig     = pyqtSignal(str, str, str) # (title, text, category) — thread-safe studio window
+    _studio_sig     = pyqtSignal(str, str, str, object, object) # (title, text, category, confirm_cb, regen_cb)
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
@@ -4723,11 +4828,11 @@ class MainWindow(QMainWindow):
             total = self._center_split.height()
             self._center_split.setSizes([max(total - 220, 120), 220])
 
-    def _show_studio(self, title: str, text: str, category: str = "code"):
+    def _show_studio(self, title: str, text: str, category: str = "code", confirm_cb=None, regen_cb=None):
         """Slot — runs on Qt main thread. Pops up the JARVIS Standalone Studio Window."""
         if self._studio_win is None:
             self._studio_win = StudioWindow()
-        self._studio_win.load_content(title, text, category)
+        self._studio_win.load_content(title, text, category, confirm_cb, regen_cb)
         self._studio_win.show()
         self._studio_win.raise_()
         self._studio_win.activateWindow()
@@ -5962,9 +6067,9 @@ class JarvisUI:
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
 
-    def show_studio(self, title: str, text: str, category: str = "code"):
+    def show_studio(self, title: str, text: str, category: str = "code", confirm_cb=None, regen_cb=None):
         """Thread-safe: display content in the standalone JARVIS Studio window."""
-        self._win._studio_sig.emit(str(title or "Draft"), str(text or ""), str(category or "code"))
+        self._win._studio_sig.emit(str(title or "Draft"), str(text or ""), str(category or "code"), confirm_cb, regen_cb)
 
     def show_quiz(self, topic: str, questions, grade=None) -> None:
         """Thread-safe: put an interactive quiz on the board.

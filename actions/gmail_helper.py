@@ -214,37 +214,39 @@ def _send_email(service, to: str, subject: str, body: str, confirmed: bool = Fal
         return "Sir, both a recipient email address and message body are required to send an email."
 
     email_subject = subject or "Message from JARVIS"
-    draft_data = {
-        "type": "email",
-        "to": to,
-        "subject": email_subject,
-        "body": body,
-    }
 
-    # 1. Show email draft in JARVIS Studio Window
+    def _do_send():
+        return _send_email_direct(service, to, email_subject, body)
+
+    def _do_regen():
+        try:
+            from core import gemini
+            prompt = f"Rephrase and polish this professional email to {to} on subject '{email_subject}':\n\n{body}\n\nReturn ONLY the improved email body text."
+            resp = gemini.call(prompt)
+            if resp and resp.text:
+                return f"To: {to}\nSubject: {email_subject}\n\n" + resp.text.strip()
+        except Exception as e:
+            print(f"[GmailHelper] ⚠️ Regenerate failed: {e}")
+        return f"To: {to}\nSubject: {email_subject}\n\n{body}"
+
     if player and hasattr(player, "show_studio"):
         try:
-            player.show_studio(f"EMAIL: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{body}", "email")
-        except Exception:
-            pass
+            player.show_studio(
+                f"EMAIL: {email_subject}",
+                f"To: {to}\nSubject: {email_subject}\n\n{body}",
+                "email",
+                confirm_cb=_do_send,
+                regen_cb=_do_regen
+            )
+        except Exception as e:
+            print(f"[GmailHelper] ⚠️ Failed to show Studio: {e}")
     elif player and hasattr(player, "show_content"):
         try:
             player.show_content(f"EMAIL DRAFT: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{body}")
         except Exception:
             pass
 
-    if not confirmed:
-        def _execute():
-            return _send_email_direct(service, to, email_subject, body)
-
-        return confirm_gate.request(
-            key=f"send_email_{to}",
-            title=f"Send Email to {to}",
-            detail=f"Subject: {email_subject}\n\n{body[:250]}...",
-            run=_execute,
-        )
-
-    return _send_email_direct(service, to, email_subject, body)
+    return f"Sir, I have prepared the email draft to {to} in your JARVIS Studio window. You can review, edit, regenerate, or click 'Confirm & Send Email' directly in the Studio window."
 
 
 def _send_reply_direct(service, recipient: str, reply_subject: str, body: str, target_thread_id: str = "", orig_msg_id: str = "") -> str:
