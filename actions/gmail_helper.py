@@ -209,66 +209,79 @@ def _open_react_composer(draft_data: dict) -> None:
         print(f"[GmailComposer] ⚠️ Failed to launch browser: {e}")
 
 
-def _send_email(service, to: str, subject: str, body: str, confirmed: bool = False, player=None, speak=None) -> str:
-    if not to or not body:
-        return "Sir, both a recipient email address and message body are required to send an email."
+def _enrich_email_content(to: str, subject: str, body: str, search_topic: str = "", player=None) -> tuple[str, str]:
+    """Research topic via web search and generate a long, comprehensive, professional email."""
+    topic_query = (search_topic or subject or "").strip()
+    search_data = ""
 
-    email_subject = subject or "Message from JARVIS"
-
-    def _do_send():
-        res = _send_email_direct(service, to, email_subject, body)
-        spk_msg = f"Sir, your email has been sent successfully to {to}."
-        if player and hasattr(player, "speak") and callable(player.speak):
-            try: player.speak(spk_msg)
-            except Exception: pass
-        elif speak and callable(speak):
-            try: speak(spk_msg)
-            except Exception: pass
-        return res
-
-    def _do_regen():
+    if search_topic or (topic_query and len((body or "").strip().split()) < 25):
+        if player and hasattr(player, "write_log"):
+            try:
+                player.write_log(f"[Gmail] 🔍 Researching topic on web: '{topic_query}'...")
+            except Exception:
+                pass
         try:
-            from core import gemini
-            prompt = (
-                f"You are an executive assistant drafting a highly professional, well-structured email to {to} regarding '{email_subject}'.\n"
-                f"Expand and polish the following draft into a complete, formal, executive-level email with an appropriate greeting, "
-                f"clear context, structured paragraphs, a professional call to action, and a formal sign-off.\n\n"
-                f"Original draft:\n{body}\n\n"
-                f"Return ONLY the complete professional email text — no markdown formatting, no commentary."
-            )
-            resp = gemini.call(prompt)
-            if resp and resp.text:
-                improved_body = resp.text.strip()
-                spk_msg = "Sir, I have regenerated a polished executive email draft for you."
-                if player and hasattr(player, "speak") and callable(player.speak):
-                    try: player.speak(spk_msg)
-                    except Exception: pass
-                elif speak and callable(speak):
-                    try: speak(spk_msg)
-                    except Exception: pass
-                return f"To: {to}\nSubject: {email_subject}\n\n" + improved_body
-        except Exception as e:
-            print(f"[GmailHelper] ⚠️ Regenerate failed: {e}")
-        return f"To: {to}\nSubject: {email_subject}\n\n{body}"
+            from actions.web_search import web_search
+            search_res = web_search({"query": topic_query, "mode": "search"}, player=player)
+            if search_res:
+                search_data = str(search_res)[:3500]
+        except Exception as se:
+            print(f"[Gmail] ⚠️ Topic web search error: {se}")
 
+    try:
+        from core import gemini
+        prompt = f"""You are an executive assistant for JARVIS crafting a comprehensive, detailed, long-form professional email.
+
+Recipient: {to}
+Subject Idea: {subject or search_topic or 'Update'}
+Given Content / Notes: {body}
+
+Web Research Findings:
+{search_data if search_data else 'None'}
+
+Instructions:
+1. Formulate a crisp, professional Subject Line if none was provided.
+2. Write a thorough, comprehensive, long-form email body (3 to 6 substantial paragraphs, with bullet points or key takeaways if applicable).
+3. Integrate real facts, latest news, and key details from the Web Research Findings into the email body.
+4. Use professional formatting, clear greetings, smooth paragraph transitions, and a formal closing signature.
+5. Return ONLY valid JSON with keys "subject" and "body".
+"""
+        resp = gemini.call(prompt, tier=gemini.SMART, timeout_ms=35000)
+        if resp and resp.text:
+            text = resp.text.strip()
+            text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text).strip()
+            data = json.loads(text)
+            final_sub = data.get("subject") or subject or f"Update: {topic_query}"
+            final_body = data.get("body") or body
+            return final_sub, final_body
+    except Exception as e:
+        print(f"[Gmail] ⚠️ Email enrichment error: {e}")
+
+    return subject or f"Message regarding {search_topic or 'Update'}", body or "Please see attached update."
+
+
+def _send_email(service, to: str, subject: str, body: str, search_topic: str = "", player=None) -> str:
+    if not to:
+        return "Sir, please specify a recipient email address."
+
+    # Perform topic research & long email synthesis
+    email_subject, email_body = _enrich_email_content(to, subject, body, search_topic=search_topic, player=player)
+
+    # 1. Show sent email in JARVIS Studio Window
     if player and hasattr(player, "show_studio"):
         try:
-            player.show_studio(
-                f"EMAIL: {email_subject}",
-                f"To: {to}\nSubject: {email_subject}\n\n{body}",
-                "email",
-                confirm_cb=_do_send,
-                regen_cb=_do_regen
-            )
-        except Exception as e:
-            print(f"[GmailHelper] ⚠️ Failed to show Studio: {e}")
+            player.show_studio(f"SENT EMAIL: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{email_body}", "email")
+        except Exception:
+            pass
     elif player and hasattr(player, "show_content"):
         try:
-            player.show_content(f"EMAIL DRAFT: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{body}")
+            player.show_content(f"SENT EMAIL: {email_subject}", f"To: {to}\nSubject: {email_subject}\n\n{email_body}")
         except Exception:
             pass
 
-    return f"Sir, I have prepared the email draft to {to} in your JARVIS Studio window. You can review, edit, regenerate, or click 'Confirm & Send Email' directly in the Studio window."
+    # 2. Send DIRECTLY without asking for confirmation
+    return _send_email_direct(service, to, email_subject, email_body)
 
 
 def _send_reply_direct(service, recipient: str, reply_subject: str, body: str, target_thread_id: str = "", orig_msg_id: str = "") -> str:
@@ -286,7 +299,7 @@ def _send_reply_direct(service, recipient: str, reply_subject: str, body: str, t
             payload["threadId"] = target_thread_id
 
         service.users().messages().send(userId="me", body=payload).execute()
-        return f"Sir, reply successfully sent to {recipient} on subject '{reply_subject}'."
+        return f"Sir, reply successfully sent directly to {recipient} on subject '{reply_subject}'."
     except Exception as e:
         return f"Failed to send reply: {e}"
 
@@ -296,16 +309,13 @@ def _reply_to_email(
     to: str = "",
     subject: str = "",
     body: str = "",
+    search_topic: str = "",
     query: str = "",
     message_id: str = "",
     thread_id: str = "",
-    confirmed: bool = False,
     player=None,
 ) -> str:
-    """Reply to an existing email message/thread with React Composer and confirmation."""
-    if not body:
-        return "Sir, please specify what message body you would like to reply with."
-
+    """Reply to an existing email message/thread directly."""
     try:
         if not message_id:
             search_q = query or (f"from:{to}" if to else "") or "is:unread label:INBOX"
@@ -337,34 +347,18 @@ def _reply_to_email(
         if not reply_subject.lower().startswith("re:"):
             reply_subject = f"Re: {reply_subject}"
 
-        draft_data = {
-            "type": "email",
-            "to": recipient,
-            "subject": reply_subject,
-            "body": body,
-        }
+        # Perform enrichment if topic specified or short body
+        if search_topic or (body and len(body.strip().split()) < 25):
+            reply_subject, body = _enrich_email_content(recipient, reply_subject, body, search_topic=search_topic, player=player)
 
-        # 1. Open React Gmail Composer in browser
-        _open_react_composer(draft_data)
-
-        # 2. Show on HUD Content Panel
-        if player and hasattr(player, "show_content"):
+        # Show in JARVIS Studio Window
+        if player and hasattr(player, "show_studio"):
             try:
-                player.show_content(f"REPLY DRAFT: {reply_subject}", f"To: {recipient}\nSubject: {reply_subject}\n\n{body}")
+                player.show_studio(f"SENT REPLY: {reply_subject}", f"To: {recipient}\nSubject: {reply_subject}\n\n{body}", "email")
             except Exception:
                 pass
 
-        if not confirmed:
-            def _execute():
-                return _send_reply_direct(service, recipient, reply_subject, body, target_thread_id, orig_msg_id)
-
-            return confirm_gate.request(
-                key=f"reply_email_{recipient}",
-                title=f"Reply to {recipient}",
-                detail=f"Subject: {reply_subject}\n\n{body[:250]}...",
-                run=_execute,
-            )
-
+        # Send reply DIRECTLY without confirmation
         return _send_reply_direct(service, recipient, reply_subject, body, target_thread_id, orig_msg_id)
 
     except Exception as e:
@@ -382,9 +376,9 @@ def gmail_action(
     to          = parameters.get("to", "")
     subject     = parameters.get("subject", "")
     body        = parameters.get("body", "")
+    search_topic = parameters.get("search_topic", "")
     message_id  = parameters.get("message_id", "")
     thread_id   = parameters.get("thread_id", "")
-    confirmed   = bool(parameters.get("confirmed", False))
     max_results = parameters.get("max_results", 5)
 
     service = _get_gmail_service()
@@ -405,10 +399,10 @@ def gmail_action(
             to=to,
             subject=subject,
             body=body,
+            search_topic=search_topic,
             query=query,
             message_id=message_id,
             thread_id=thread_id,
-            confirmed=confirmed,
             player=player,
         )
     elif action in ("send_email", "send", "compose"):
@@ -417,7 +411,7 @@ def gmail_action(
             to=to,
             subject=subject,
             body=body,
-            confirmed=confirmed,
+            search_topic=search_topic,
             player=player,
         )
     else:
@@ -447,9 +441,9 @@ def _log(message: str, player=None) -> None:
 TOOL = {
     "name": "gmail_helper",
     "description": (
-        "Reads unread emails, views email content, searches email history, drafts/sends new messages, "
-        "and replies directly to email threads using the Gmail API. Opens the React Gmail Composer UI "
-        "for instant user review and one-click sending."
+        "Reads unread emails, views email content, searches email history, composes/sends new emails directly, "
+        "and replies to email threads using the Gmail API. Supports automatic web research for topic-based emails "
+        "(e.g. Elon Musk projects, AI news) to generate comprehensive long-form emails and send them directly."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -473,7 +467,11 @@ TOOL = {
             },
             "body": {
                 "type": "STRING",
-                "description": "For send_email or reply_to_email: The message body/reply text."
+                "description": "For send_email or reply_to_email: Message body text."
+            },
+            "search_topic": {
+                "type": "STRING",
+                "description": "Optional topic to research on the web before sending (e.g., 'Elon Musk new project', 'latest AI news', 'market analysis'). JARVIS will search the web and write a detailed long-form email."
             },
             "message_id": {
                 "type": "STRING",
@@ -482,10 +480,6 @@ TOOL = {
             "thread_id": {
                 "type": "STRING",
                 "description": "Optional specific Gmail thread ID for reply_to_email."
-            },
-            "confirmed": {
-                "type": "BOOLEAN",
-                "description": "Set to true only if the user has already explicitly confirmed sending this draft."
             },
             "max_results": {
                 "type": "INTEGER",
